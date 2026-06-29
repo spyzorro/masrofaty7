@@ -33,7 +33,7 @@ import org.json.JSONObject;
 
 public class ExpenseDbHelper extends SQLiteOpenHelper {
     private static final String DB_NAME = "expense_guard.db";
-    private static final int DB_VERSION = 5;
+    private static final int DB_VERSION = 6;
     private static final String PUBLIC_BACKUP_FILE = "masrofaty_backup.json";
     private static final String PUBLIC_BACKUP_FILE_ALT = "masrofaty_backup_DO_NOT_DELETE.json";
     private static final String PUBLIC_BACKUP_DIR = Environment.DIRECTORY_DOCUMENTS + "/Masrofaty/";
@@ -62,7 +62,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
                 "createdAt INTEGER, updatedAt INTEGER)");
         db.execSQL("CREATE TABLE debt_payments(" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                "debtId INTEGER, amount REAL, note TEXT, dateMillis INTEGER, txId INTEGER)");
+                "debtId INTEGER, amount REAL, note TEXT, dateMillis INTEGER, txId INTEGER, screenshotUri TEXT)");
         db.execSQL("CREATE TABLE subscriptions(" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "name TEXT, amount REAL, currency TEXT, merchant TEXT, category TEXT," +
@@ -131,6 +131,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         if (oldVersion < 5) {
             try { db.execSQL("ALTER TABLE debts ADD COLUMN currency TEXT DEFAULT 'SAR'"); } catch (Exception ignored) {}
             try { setSetting(db, "privacy_mode", "0"); } catch (Exception ignored) {}
+        }
+        if (oldVersion < 6) {
+            try { db.execSQL("ALTER TABLE debt_payments ADD COLUMN screenshotUri TEXT DEFAULT ''"); } catch (Exception ignored) {}
         }
     }
 
@@ -248,6 +251,8 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         MessageParser.ParsedTransaction tx = MessageParser.parseBankMessage(raw);
         JSONObject rule = matchLearnedBankRule(raw);
         if (rule != null) {
+            String learnedKind = rule.optString("kind", "");
+            if ("SKIP".equalsIgnoreCase(learnedKind)) return null;
             if (tx == null) tx = parseLearnedBankMessage(raw, rule);
             else applyLearnedRule(tx, rule);
         } else if (tx != null && shouldSendToSmartReview(tx)) {
@@ -359,7 +364,12 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     private void applyLearnedRule(MessageParser.ParsedTransaction tx, JSONObject rule) {
         if (tx == null || rule == null) return;
         String kind = rule.optString("kind", "EXPENSE");
-        if ("INCOME".equals(kind)) {
+        if ("SKIP".equals(kind)) {
+            tx.type = "BANK_SKIP_RULE";
+            tx.status = "SKIPPED";
+            tx.affectsBudget = 0;
+            tx.title = "رسالة متخطاة";
+        } else if ("INCOME".equals(kind)) {
             tx.type = "EXTRA_INCOME";
             tx.status = "CONFIRMED";
             tx.affectsBudget = 0;
@@ -827,9 +837,14 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     }
 
     public void addDebtPayment(long debtId, double amount, String note, long txId) {
+        addDebtPayment(debtId, amount, note, txId, "");
+    }
+
+    public void addDebtPayment(long debtId, double amount, String note, long txId, String screenshotUri) {
         SQLiteDatabase db = getWritableDatabase();
         ContentValues p = new ContentValues();
         p.put("debtId", debtId); p.put("amount", amount); p.put("note", note); p.put("dateMillis", System.currentTimeMillis()); p.put("txId", txId);
+        p.put("screenshotUri", screenshotUri == null ? "" : screenshotUri);
         db.insert("debt_payments", null, p);
         try (Cursor c = db.rawQuery("SELECT amount, paid FROM debts WHERE id=?", new String[]{String.valueOf(debtId)})) {
             if (c.moveToFirst()) {
@@ -840,6 +855,15 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             }
         }
         autoLocalBackupAfterChange();
+    }
+
+    public List<DebtPayment> getDebtPayments(long debtId) {
+        List<DebtPayment> list = new ArrayList<>();
+        SQLiteDatabase db = getReadableDatabase();
+        try (Cursor c = db.rawQuery("SELECT * FROM debt_payments WHERE debtId=? ORDER BY dateMillis DESC", new String[]{String.valueOf(debtId)})) {
+            while (c.moveToNext()) list.add(DebtPayment.from(c));
+        } catch (Exception ignored) {}
+        return list;
     }
 
     public long addSubscription(String name, double amount, String currency, String merchant, String category, long nextDateMillis, String notes) {
@@ -1486,6 +1510,22 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             s.notes = c.getString(c.getColumnIndexOrThrow("notes"));
             s.lastChargedMillis = c.getLong(c.getColumnIndexOrThrow("lastChargedMillis"));
             return s;
+        }
+    }
+
+    public static class DebtPayment {
+        public long id; public long debtId; public double amount; public String note; public long dateMillis; public long txId; public String screenshotUri;
+        static DebtPayment from(Cursor c) {
+            DebtPayment p = new DebtPayment();
+            p.id = c.getLong(c.getColumnIndexOrThrow("id"));
+            p.debtId = c.getLong(c.getColumnIndexOrThrow("debtId"));
+            p.amount = c.getDouble(c.getColumnIndexOrThrow("amount"));
+            p.note = c.getString(c.getColumnIndexOrThrow("note"));
+            p.dateMillis = c.getLong(c.getColumnIndexOrThrow("dateMillis"));
+            p.txId = c.getLong(c.getColumnIndexOrThrow("txId"));
+            int shotIndex = c.getColumnIndex("screenshotUri");
+            p.screenshotUri = shotIndex >= 0 ? c.getString(shotIndex) : "";
+            return p;
         }
     }
 

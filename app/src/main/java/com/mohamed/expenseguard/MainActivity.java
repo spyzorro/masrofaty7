@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private static final int REQ_CORE_PERMS = 10;
     private static final int REQ_EXPORT_BACKUP_FILE = 120;
     private static final int REQ_IMPORT_BACKUP_FILE = 121;
+    private static final int REQ_DEBT_SCREENSHOT = 122;
 
     private final int BG = Color.rgb(246, 250, 248);
     private final int DARK = Color.rgb(15, 31, 42);
@@ -79,6 +80,9 @@ public class MainActivity extends Activity {
     private long lastAutoBackupAttempt = 0L;
     private boolean awaitingDeviceCredential = false;
     private boolean lockDialogShowing = false;
+    private long pendingDebtScreenshotDebtId = -1;
+    private double pendingDebtScreenshotAmount = 0;
+    private String pendingDebtScreenshotNote = "";
 
     private boolean isEn() { return db != null && "en".equals(db.getSetting("language", "ar")); }
     private String L(String ar, String en) { return isEn() ? en : ar; }
@@ -1275,6 +1279,8 @@ public class MainActivity extends Activity {
             handleBackupFileChosen(data);
         } else if (requestCode == REQ_IMPORT_BACKUP_FILE && resultCode == RESULT_OK && data != null) {
             importBackupFromUri(data.getData(), data.getFlags());
+        } else if (requestCode == REQ_DEBT_SCREENSHOT && resultCode == RESULT_OK && data != null) {
+            handleDebtScreenshotChosen(data);
         } else if (requestCode == REQ_GOOGLE_SIGN_IN && data != null) {
             syncManager.handleSignInResult(data, new FirebaseSyncManager.Callback() {
                 @Override public void ok(String message) { runOnUiThread(() -> {
@@ -1417,7 +1423,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(8), dp(14), dp(8));
 
-        TextView hint = text("الصق رسالة بنك جديدة، واختار هل هي خصم أو إضافة. بعد كده أي رسالة بنفس الشكل هتتسجل تلقائيًا.", 13, false, MUTED);
+        TextView hint = text("الصق رسالة بنك، واختار خصم أو إضافة أو تخطي. أي رسالة شبهها بعد كده هتتنفذ بنفس القرار.", 13, false, MUTED);
         box.addView(hint, matchWrap());
         box.addView(pill("القواعد المحفوظة: " + db.learnedBankRuleCount(), PURPLE), matchWrap());
 
@@ -1473,6 +1479,10 @@ public class MainActivity extends Activity {
         grid2.addView(saved, new LinearLayout.LayoutParams(0, dp(54), 1));
         box.addView(grid2, matchWrap());
 
+        Button skip = softBtn("تخطي أي رسالة شبه دي", RED);
+        skip.setOnClickListener(v -> learnBankRuleAndSave(input.getText().toString(), "SKIP", selectedCategory[0], dialog));
+        box.addView(skip);
+
         Button clear = softBtn("مسح كل قواعد رسائل البنك المتعلمة", RED);
         clear.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("تأكيد المسح")
@@ -1487,11 +1497,17 @@ public class MainActivity extends Activity {
     private void learnBankRuleAndSave(String raw, String kind, String category, AlertDialog dialog) {
         if (raw == null || raw.trim().isEmpty()) { toast("الصق رسالة البنك الأول"); return; }
         db.learnBankMessage(raw, kind, category);
+        autoCloudBackup();
+        String kindName = "EXPENSE".equals(kind) ? "خصم" : ("INCOME".equals(kind) ? "إضافة" : ("ONLINE".equals(kind) ? "أونلاين للمراجعة" : ("SKIP".equals(kind) ? "تخطي دائم" : "حفظ فقط")));
+        if ("SKIP".equals(kind)) {
+            toast("اتعلم شكل الرسالة وهيتخطاها بعد كده نهائيًا");
+            if (dialog != null) dialog.dismiss();
+            showHome();
+            return;
+        }
         MessageParser.ParsedTransaction tx = db.parseBankMessageSmart(raw);
         long id = -1;
         if (tx != null) id = db.insertParsed(tx);
-        autoCloudBackup();
-        String kindName = "EXPENSE".equals(kind) ? "خصم" : ("INCOME".equals(kind) ? "إضافة" : ("ONLINE".equals(kind) ? "أونلاين للمراجعة" : "حفظ فقط"));
         if (tx == null) toast("اتعلم شكل الرسالة كـ " + kindName + "، لكن لم يتم حفظ العملية لعدم وجود مبلغ واضح");
         else if (id == -1 || id == -2) toast("اتعلم شكل الرسالة كـ " + kindName + "، والعملية الحالية مكررة");
         else toast("اتعلم شكل الرسالة واتحفظت كـ " + kindName);
@@ -1742,6 +1758,7 @@ public class MainActivity extends Activity {
         if (d.facebook != null && d.facebook.trim().length() > 0) {
             Button f = softBtn("فتح فيسبوك", BLUE); f.setOnClickListener(v -> openUrl(d.facebook)); c.addView(f);
         }
+        showDebtPaymentsOnCard(c, d);
         Button payment = softBtn(iOwe ? "سجل إنك سددت جزء" : "سجل إنه دفع جزء", ORANGE);
         payment.setOnClickListener(v -> debtPaymentAmountDialog(d));
         c.addView(payment);
@@ -1826,7 +1843,7 @@ public class MainActivity extends Activity {
         final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("اختار الشخص").setView(box).setNegativeButton("إلغاء", null).create();
         for (ExpenseDbHelper.Debt debt : debts) {
             if ("PAID".equals(debt.status)) continue;
-            Button b = softBtn(debt.name + " - المتبقي " + money(debt.amount - debt.paid), PURPLE);
+            Button b = softBtn(debt.name + " - المتبقي " + debtMoney(debt, debt.amount - debt.paid), PURPLE);
             b.setOnClickListener(v -> { dialog.dismiss(); debtPaymentAmountDialog(debt); });
             box.addView(b);
         }
@@ -1834,15 +1851,102 @@ public class MainActivity extends Activity {
     }
 
     private void debtPaymentAmountDialog(ExpenseDbHelper.Debt debt) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
         EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         input.setHint("المبلغ المدفوع");
         input.setGravity(Gravity.RIGHT);
-        new AlertDialog.Builder(this).setTitle("دفعة من " + debt.name).setView(input)
-                .setPositiveButton("حفظ", (d, w) -> {
-                    double a = parseAmount(input.getText().toString());
-                    if (a > 0) { db.addDebtPayment(debt.id, a, "دفعة يدوية", -1); showDebts(); }
-                }).setNegativeButton("إلغاء", null).show();
+        input.setTextDirection(View.TEXT_DIRECTION_RTL);
+        box.addView(input, matchWrap());
+        box.addView(text("تقدر تحفظ الدفعة بس، أو ترفق سكرين شوت التحويل عشان ترجع لها في أي وقت.", 12, false, MUTED), matchWrap());
+        Button save = softBtn("حفظ بدون صورة", ORANGE);
+        Button saveWithShot = softBtn("حفظ + إرفاق سكرين شوت", BLUE);
+        box.addView(save);
+        box.addView(saveWithShot);
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("دفعة من " + debt.name).setView(box).setNegativeButton("إلغاء", null).create();
+        save.setOnClickListener(v -> {
+            double a = parseAmount(input.getText().toString());
+            if (a <= 0) { toast("اكتب المبلغ"); return; }
+            db.addDebtPayment(debt.id, a, "دفعة يدوية", -1);
+            toast("تم حفظ الدفعة");
+            dialog.dismiss();
+            showDebts();
+        });
+        saveWithShot.setOnClickListener(v -> {
+            double a = parseAmount(input.getText().toString());
+            if (a <= 0) { toast("اكتب المبلغ"); return; }
+            pendingDebtScreenshotDebtId = debt.id;
+            pendingDebtScreenshotAmount = a;
+            pendingDebtScreenshotNote = "دفعة يدوية مع سكرين شوت";
+            dialog.dismiss();
+            chooseDebtPaymentScreenshot();
+        });
+        dialog.show();
+    }
+
+    private void showDebtPaymentsOnCard(LinearLayout c, ExpenseDbHelper.Debt d) {
+        List<ExpenseDbHelper.DebtPayment> payments = db.getDebtPayments(d.id);
+        if (payments.isEmpty()) return;
+        c.addView(text("سجل السداد", 14, true, DARK), matchWrap());
+        for (ExpenseDbHelper.DebtPayment p : payments) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.setPadding(dp(10), dp(7), dp(10), dp(7));
+            row.setBackground(strokeBg(Color.rgb(250, 252, 251), Color.rgb(226, 235, 231), 16, 1));
+            row.addView(text(debtMoney(d, p.amount) + " — " + ExpenseDbHelper.date(p.dateMillis), 13, true, DARK), matchWrap());
+            if (p.note != null && p.note.trim().length() > 0) row.addView(text(p.note, 12, false, MUTED), matchWrap());
+            if (p.screenshotUri != null && p.screenshotUri.trim().length() > 0) {
+                Button shot = softBtn("عرض السكرين شوت", BLUE);
+                shot.setOnClickListener(v -> openDebtPaymentScreenshot(p.screenshotUri));
+                row.addView(shot);
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, dp(4), 0, dp(4));
+            c.addView(row, lp);
+        }
+    }
+
+    private void chooseDebtPaymentScreenshot() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("image/*");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(i, REQ_DEBT_SCREENSHOT);
+        } catch (Exception e) {
+            toast("الجهاز لا يدعم اختيار صورة");
+        }
+    }
+
+    private void handleDebtScreenshotChosen(Intent data) {
+        Uri uri = data == null ? null : data.getData();
+        if (uri == null || pendingDebtScreenshotDebtId <= 0 || pendingDebtScreenshotAmount <= 0) {
+            toast("لم يتم اختيار صورة");
+            return;
+        }
+        try {
+            int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            if (flags != 0) getContentResolver().takePersistableUriPermission(uri, flags);
+        } catch (Exception ignored) { }
+        db.addDebtPayment(pendingDebtScreenshotDebtId, pendingDebtScreenshotAmount, pendingDebtScreenshotNote, -1, uri.toString());
+        pendingDebtScreenshotDebtId = -1;
+        pendingDebtScreenshotAmount = 0;
+        pendingDebtScreenshotNote = "";
+        toast("تم حفظ الدفعة والسكرين شوت");
+        showDebts();
+    }
+
+    private void openDebtPaymentScreenshot(String uriString) {
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(Uri.parse(uriString), "image/*");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(i);
+        } catch (Exception e) {
+            toast("مش قادر أفتح الصورة، اتأكد إنها لسه موجودة على الجهاز");
+        }
     }
 
     private EditText field(String hint, String value) {

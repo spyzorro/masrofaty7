@@ -201,34 +201,37 @@ public class MainActivity extends Activity {
     }
 
     private void openAddMenu() {
-        LinearLayout box = menuBox();
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("إضافة سريعة").setView(box).create();
-        addMenuButton(box, "إضافة مصروف / دخل كتابة", BLUE, v -> { dialog.dismiss(); manualDialog(); });
-        addMenuButton(box, "إضافة بالفويس", PRIMARY, v -> { dialog.dismiss(); startVoice(); });
-        addMenuButton(box, "دخل إضافي منفصل", PRIMARY_DARK, v -> { dialog.dismiss(); extraIncomeDialog(); });
-        addMenuButton(box, "اشتراك شهري", PURPLE, v -> { dialog.dismiss(); addSubscriptionDialog(); });
-        addMenuButton(box, "تعليم/تحليل رسالة بنك", ORANGE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
+        LinearLayout box = styledMenuBox("إضافة سريعة", "اختار نوع الإضافة: مصروف، دخل، فويس، اشتراك، أو رسالة بنك", PRIMARY);
+        ScrollView sc = wrapMenu(box);
+        final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
+        addMenuTile(box, "مصروف / دخل كتابة", "إضافة عملية جديدة واختيار الفئة والعملة", "➕", BLUE, v -> { dialog.dismiss(); manualDialog(); });
+        addMenuTile(box, "إضافة بالفويس", "سجل مصروفك بالصوت بسرعة", "🎙️", PRIMARY, v -> { dialog.dismiss(); startVoice(); });
+        addMenuTile(box, "دخل إضافي", "أضف أي مبلغ دخل الشهر ده غير الميزانية", "💵", PRIMARY_DARK, v -> { dialog.dismiss(); extraIncomeDialog(); });
+        addMenuTile(box, "اشتراك شهري", "Google / Netflix / أي خصم شهري متكرر", "🔁", PURPLE, v -> { dialog.dismiss(); addSubscriptionDialog(); });
+        addMenuTile(box, "تعليم رسالة بنك", "الصق رسالة بنك وخلي التطبيق يتعلم شكلها", "🏦", ORANGE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
         dialog.show();
     }
 
     private void openRecordsMenu() {
-        LinearLayout box = menuBox();
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("السجل والمراجعة").setView(box).create();
-        addMenuButton(box, "سجل العمليات", BLUE, v -> { dialog.dismiss(); showLog(); });
-        addMenuButton(box, "عمليات للمراجعة", ORANGE, v -> { dialog.dismiss(); showPending(); });
-        addMenuButton(box, "تعليم/تحليل رسالة بنك", PURPLE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
-        addMenuButton(box, "أرشيف الشهور", PRIMARY_DARK, v -> { dialog.dismiss(); showMonthArchive(); });
+        LinearLayout box = styledMenuBox("السجل والمراجعة", "السجل، العمليات المعلقة، وتعليم رسائل البنوك في مكان واحد", BLUE);
+        ScrollView sc = wrapMenu(box);
+        final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
+        addMenuTile(box, "سجل العمليات", "كل عملية مسجلة ومعاها العملة والفئة", "📋", BLUE, v -> { dialog.dismiss(); showLog(); });
+        addMenuTile(box, "عمليات للمراجعة", "مراجعة الأونلاين والوارد قبل الحفظ", "⚠️", ORANGE, v -> { dialog.dismiss(); showPending(); });
+        addMenuTile(box, "تعليم رسالة بنك", "علم التطبيق رسائل بنك جديدة كخصم أو إضافة", "🏦", PURPLE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
+        addMenuTile(box, "أرشيف الشهور", "ارجع لأي شهر قديم وشوف ملخصه", "🗓️", PRIMARY_DARK, v -> { dialog.dismiss(); showMonthArchive(); });
         dialog.show();
     }
 
     private void openMoneyMenu() {
-        LinearLayout box = menuBox();
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("الفلوس والديون").setView(box).create();
-        addMenuButton(box, "الديون والمواعيد", PURPLE, v -> { dialog.dismiss(); showDebts(); });
-        addMenuButton(box, "محفظة الكاش", PRIMARY_DARK, v -> { dialog.dismiss(); showCashWallet(); });
-        addMenuButton(box, "الاشتراكات الشهرية", BLUE, v -> { dialog.dismiss(); showSubscriptions(); });
-        addMenuButton(box, "مراجعة الأونلاين والوارد", ORANGE, v -> { dialog.dismiss(); showPending(); });
-        addMenuButton(box, "تعديل الميزانية والمصروف", PRIMARY, v -> { dialog.dismiss(); budgetAndSpentDialog(); });
+        LinearLayout box = styledMenuBox("فلوس وكاش", "الديون، المواعيد، الكاش، الاشتراكات، والميزانية", PURPLE);
+        ScrollView sc = wrapMenu(box);
+        final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
+        addMenuTile(box, "الديون والمواعيد", "فلوس ليك أو عليك مع تذكيرات السداد", "🤝", PURPLE, v -> { dialog.dismiss(); showDebts(); });
+        addMenuTile(box, "محفظة الكاش", "إضافة كاش أو صرف كاش أو تعديل الرصيد", "💸", PRIMARY_DARK, v -> { dialog.dismiss(); showCashWallet(); });
+        addMenuTile(box, "الاشتراكات الشهرية", "خصومات متكررة وتنبيهات قبل الخصم", "🔁", BLUE, v -> { dialog.dismiss(); showSubscriptions(); });
+        addMenuTile(box, "مراجعة الأونلاين والوارد", "راجع العمليات اللي محتاجة قرار", "🧾", ORANGE, v -> { dialog.dismiss(); showPending(); });
+        addMenuTile(box, "الميزانية والمصروف", "تعديل الميزانية أو تصحيح المصروف الحالي", "⚙️", PRIMARY, v -> { dialog.dismiss(); budgetAndSpentDialog(); });
         dialog.show();
     }
 
@@ -237,6 +240,60 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(12), dp(8), dp(12), dp(8));
         return box;
+    }
+
+    private LinearLayout styledMenuBox(String title, String subtitle, int color) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.VERTICAL);
+        head.setPadding(dp(16), dp(14), dp(16), dp(14));
+        head.setBackground(gradient(color, PRIMARY_DARK, 24));
+        head.addView(text(title, 20, true, Color.WHITE), matchWrap());
+        head.addView(text(subtitle, 12, false, Color.rgb(235, 255, 249)), matchWrap());
+        box.addView(head, cardLp());
+        return box;
+    }
+
+    private ScrollView wrapMenu(LinearLayout box) {
+        ScrollView sc = new ScrollView(this);
+        sc.setFillViewport(false);
+        sc.addView(box, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        return sc;
+    }
+
+    private void addMenuTile(LinearLayout box, String title, String subtitle, String icon, int color, View.OnClickListener click) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.HORIZONTAL);
+        tile.setGravity(Gravity.CENTER_VERTICAL);
+        tile.setPadding(dp(12), dp(10), dp(12), dp(10));
+        tile.setBackground(strokeBg(pale(color), lighten(color), 22, 1));
+        tile.setClickable(true);
+        tile.setOnClickListener(click);
+        if (Build.VERSION.SDK_INT >= 21) tile.setElevation(dp(1));
+
+        TextView ic = text(icon, 25, true, color);
+        ic.setGravity(Gravity.CENTER);
+        tile.addView(ic, new LinearLayout.LayoutParams(dp(46), dp(54)));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        texts.setPadding(dp(10), 0, 0, 0);
+        TextView tt = text(title, 16, true, color);
+        TextView ss = text(subtitle, 12, false, DARK);
+        texts.addView(tt, matchWrap());
+        texts.addView(ss, matchWrap());
+        tile.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView arrow = text("‹", 24, true, color);
+        arrow.setGravity(Gravity.CENTER);
+        tile.addView(arrow, new LinearLayout.LayoutParams(dp(26), dp(54)));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(5), 0, dp(8));
+        box.addView(tile, lp);
     }
 
     private void addMenuButton(LinearLayout box, String title, int color, View.OnClickListener click) {
@@ -540,13 +597,19 @@ public class MainActivity extends Activity {
     }
 
     private String defaultUpdateUrl() {
+        List<String> list = updateUrlCandidates();
+        return list.isEmpty() ? "" : list.get(0);
+    }
+
+    private List<String> updateUrlCandidates() {
+        ArrayList<String> urls = new ArrayList<>();
         String saved = db.getSetting("update_json_url", "").trim();
-        if (isValidUpdateUrl(saved)) return saved;
+        if (isValidUpdateUrl(saved)) addUniqueUrl(urls, saved);
 
         try {
             int id = getResources().getIdentifier("update_json_url", "string", getPackageName());
             String v = id == 0 ? "" : getString(id).trim();
-            if (isValidUpdateUrl(v)) return v;
+            if (isValidUpdateUrl(v)) addUniqueUrl(urls, v);
         } catch (Exception ignored) {}
 
         try {
@@ -554,11 +617,21 @@ public class MainActivity extends Activity {
             String branch = BuildConfig.GITHUB_BRANCH == null ? "main" : BuildConfig.GITHUB_BRANCH.trim();
             if (repo.length() > 0 && repo.contains("/")) {
                 if (branch.length() == 0) branch = "main";
-                return "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json";
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/update.json");
             }
         } catch (Exception ignored) {}
 
-        return "";
+        return urls;
+    }
+
+    private void addUniqueUrl(List<String> urls, String url) {
+        if (url == null) return;
+        String u = url.trim();
+        if (u.length() == 0) return;
+        if (!urls.contains(u)) urls.add(u);
     }
 
     private boolean isValidUpdateUrl(String url) {
@@ -566,7 +639,7 @@ public class MainActivity extends Activity {
         String u = url.trim();
         if (u.length() == 0) return false;
         if (!u.startsWith("http://") && !u.startsWith("https://")) return false;
-        if (u.contains("USERNAME") || u.contains("REPO") || u.contains("رابط")) return false;
+        if (u.contains("USERNAME") || u.contains("REPO") || u.contains("رابط") || u.contains("ضع")) return false;
         return true;
     }
 
@@ -577,25 +650,25 @@ public class MainActivity extends Activity {
         LinearLayout info = card();
         info.addView(text("تحديث التطبيق", 22, true, DARK), matchWrap());
         info.addView(text("الإصدار الحالي: " + BuildConfig.VERSION_NAME, 14, true, PRIMARY_DARK), matchWrap());
-        info.addView(text("التطبيق بيفحص التحديث تلقائيًا عند الفتح. الزر ده للفحص اليدوي فقط.", 13, false, MUTED), matchWrap());
+        info.addView(text("هيتم فحص التحديث تلقائيًا من GitHub. الزر ده للفحص اليدوي فقط.", 13, false, MUTED), matchWrap());
         Button check = btn("فحص التحديث الآن");
         check.setOnClickListener(v -> checkForUpdates(defaultUpdateUrl()));
         info.addView(check);
         root.addView(info);
 
-        String url = defaultUpdateUrl();
-        if (url.length() == 0) {
+        List<String> urls = updateUrlCandidates();
+        if (urls.isEmpty()) {
             LinearLayout warn = card(pale(ORANGE));
             warn.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
-            warn.addView(text("رابط التحديث غير مضاف", 18, true, ORANGE), matchWrap());
-            warn.addView(text("مالك التطبيق يضيف رابط update.json مرة واحدة داخل strings.xml عشان المستخدم العادي ميشوفش إعدادات معقدة.", 13, false, DARK), matchWrap());
+            warn.addView(text("التحديث لم يتم ربطه بعد", 18, true, ORANGE), matchWrap());
+            warn.addView(text("ارفع ملف .github/workflows/android.yml الجديد وشغل GitHub Actions مرة. بعدها هيتعمل update.json تلقائيًا في Releases والجذر.", 13, false, DARK), matchWrap());
             root.addView(warn);
         }
     }
 
     private void autoCheckForUpdatesSilent() {
-        String url = defaultUpdateUrl();
-        if (url.length() == 0) return;
+        List<String> urls = updateUrlCandidates();
+        if (urls.isEmpty()) return;
         long now = System.currentTimeMillis();
         long last = 0;
         try { last = Long.parseLong(db.getSetting("last_update_check", "0")); } catch (Exception ignored) {}
@@ -603,7 +676,7 @@ public class MainActivity extends Activity {
         db.setSetting("last_update_check", String.valueOf(now));
         new Thread(() -> {
             try {
-                String jsonText = downloadText(url);
+                String jsonText = downloadTextFromCandidates(urls);
                 JSONObject obj = new JSONObject(jsonText);
                 int latestCode = obj.optInt("latestVersionCode", obj.optInt("versionCode", BuildConfig.VERSION_CODE));
                 if (latestCode <= BuildConfig.VERSION_CODE) return;
@@ -618,14 +691,16 @@ public class MainActivity extends Activity {
     }
 
     private void checkForUpdates(String updateUrl) {
-        if (updateUrl == null || updateUrl.trim().isEmpty()) {
-            toast("رابط التحديث غير جاهز. ابني النسخة من GitHub Actions أو أضف update.json");
+        List<String> urls = updateUrlCandidates();
+        if (isValidUpdateUrl(updateUrl)) addUniqueUrl(urls, updateUrl);
+        if (urls.isEmpty()) {
+            toast("التحديث غير مربوط. ارفع workflow الجديد وشغل GitHub Actions مرة");
             return;
         }
         toast("جاري فحص التحديث...");
         new Thread(() -> {
             try {
-                String jsonText = downloadText(updateUrl);
+                String jsonText = downloadTextFromCandidates(urls);
                 JSONObject obj = new JSONObject(jsonText);
                 int latestCode = obj.optInt("latestVersionCode", obj.optInt("versionCode", BuildConfig.VERSION_CODE));
                 String latestName = obj.optString("latestVersionName", obj.optString("versionName", ""));
@@ -640,10 +715,19 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 runOnUiThread(() -> new AlertDialog.Builder(this)
                         .setTitle("فشل فحص التحديث")
-                        .setMessage("" + e.getMessage())
+                        .setMessage(e.getMessage() + "\n\nلو الخطأ HTTP 404: اتأكد إن الريبو Public أو إن update.json مرفوع كملف في GitHub Release، وشغل Actions بعد رفع workflow الجديد.")
                         .setPositiveButton("تمام", null).show());
             }
         }).start();
+    }
+
+    private String downloadTextFromCandidates(List<String> urls) throws Exception {
+        Exception last = null;
+        for (String u : urls) {
+            try { return downloadText(u); }
+            catch (Exception e) { last = e; }
+        }
+        throw last == null ? new Exception("لا يوجد رابط تحديث صالح") : last;
     }
 
     private String downloadText(String urlText) throws Exception {
@@ -1199,7 +1283,10 @@ public class MainActivity extends Activity {
         }));
         box.addView(category);
 
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تعليم رسائل البنك").setView(box).setNegativeButton("إغلاق", null).create();
+        ScrollView trainerScroll = new ScrollView(this);
+        trainerScroll.setFillViewport(false);
+        trainerScroll.addView(box, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تعليم رسائل البنك").setView(trainerScroll).setNegativeButton("إغلاق", null).create();
 
         Button analyze = btn("تحليل وحفظ مرة واحدة");
         analyze.setOnClickListener(v -> {

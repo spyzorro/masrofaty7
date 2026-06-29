@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 17,
-  "latestVersionName": "2.6",
-  "apkUrl": "ضع رابط APK من GitHub Releases هنا لو أول مرة فقط",
-  "notes": "تفعيل التحديث التلقائي من GitHub حتى لو update_json_url فارغ داخل strings.xml",
+  "latestVersionCode": 18,
+  "latestVersionName": "2.7",
+  "apkUrl": "https://github.com/OWNER/REPO/releases/latest/download/Masrofaty-v2.7.apk",
+  "notes": "إصلاح فحص التحديث HTTP 404، تحسين قوائم الأزرار السفلية، وإضافة Scroll لتعليم رسائل البنك",
   "dataVersion": "2026-06-29",
-  "message": "يوجد تحديث جديد متاح الآن"
+  "message": "تحديث جديد متاح الآن"
 }

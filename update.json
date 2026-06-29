@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 18,
-  "latestVersionName": "2.7",
-  "apkUrl": "https://github.com/OWNER/REPO/releases/latest/download/Masrofaty-v2.7.apk",
-  "notes": "إصلاح فحص التحديث HTTP 404، تحسين قوائم الأزرار السفلية، وإضافة Scroll لتعليم رسائل البنك",
+  "latestVersionCode": 19,
+  "latestVersionName": "2.8",
+  "apkUrl": "https://github.com/OWNER/REPO/releases/latest/download/Masrofaty-v2.8.apk",
+  "notes": "شاشة مراجعة ذكية للرسائل الجديدة ومنع تكرار أقوى بين SMS والإشعارات والرسائل المتشابهة",
   "dataVersion": "2026-06-29",
   "message": "تحديث جديد متاح الآن"
 }

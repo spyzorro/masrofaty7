@@ -206,8 +206,56 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         if (rule != null) {
             if (tx == null) tx = parseLearnedBankMessage(raw, rule);
             else applyLearnedRule(tx, rule);
+        } else if (tx != null && shouldSendToSmartReview(tx)) {
+            moveToSmartReview(tx, "شكل رسالة جديد محتاج تأكيد");
+        }
+        if (tx != null) {
+            tx.fingerprint = buildStableBankFingerprint(tx);
         }
         return tx;
+    }
+
+    private boolean shouldSendToSmartReview(MessageParser.ParsedTransaction tx) {
+        if (tx == null) return false;
+        String type = tx.type == null ? "" : tx.type;
+        String status = tx.status == null ? "" : tx.status;
+        if ("PENDING_REVIEW".equals(status)) return true;
+        if ("PENDING_ONLINE".equals(status) || "PENDING_INCOMING".equals(status)) return false;
+        // أي رسالة بنك عامة مش متعلمة تدخل شاشة مراجعة ذكية بدل ما تتخصم تلقائيًا بالغلط.
+        return type.startsWith("GENERIC_BANK") || type.startsWith("UNKNOWN_BANK");
+    }
+
+    private void moveToSmartReview(MessageParser.ParsedTransaction tx, String reason) {
+        tx.type = "SMART_REVIEW_BANK_MESSAGE";
+        tx.status = "PENDING_REVIEW";
+        tx.affectsBudget = 0;
+        String base = safeTitle(tx.merchant, tx.title);
+        tx.title = "رسالة بنك للمراجعة - " + base;
+        tx.extra = appendExtra(tx.extra, "reviewReason=" + reason);
+    }
+
+    private String buildStableBankFingerprint(MessageParser.ParsedTransaction tx) {
+        if (tx == null) return "";
+        String src = tx.source == null ? "" : tx.source.toLowerCase(Locale.ROOT);
+        String raw = tx.raw == null ? "" : tx.raw;
+        boolean bankLike = src.contains("sms") || src.contains("notification") || src.contains("bank") || src.contains("learned")
+                || raw.toLowerCase(Locale.ROOT).contains("sar") || raw.contains("ريال") || raw.contains("شراء") || raw.contains("حوالة");
+        if (!bankLike) return tx.fingerprint == null ? MessageParser.sha256("manual|" + raw + "|" + tx.dateMillis) : tx.fingerprint;
+        long minuteBucket = (tx.dateMillis > 0 ? tx.dateMillis : System.currentTimeMillis()) / (15L * 60L * 1000L);
+        String direction = tx.affectsBudget == 1 ? "expense" : ("EXTRA_INCOME".equals(tx.type) || "INCOMING_TRANSFER".equals(tx.type) ? "income" : "review");
+        String key = direction + "|" + String.format(Locale.US, "%.2f", tx.amount) + "|" + safe(tx.currency) + "|" + safe(tx.card) + "|" + compactText(tx.merchant + " " + tx.title) + "|" + minuteBucket;
+        return MessageParser.sha256(key);
+    }
+
+    private String safe(String s) { return s == null ? "" : s.trim(); }
+
+    private String compactText(String s) {
+        if (s == null) return "";
+        return s.toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{Nd}]+", " ")
+                .replaceAll("\\b[0-9]{1,2}[:/][0-9]{1,2}[^ ]*", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     public void learnBankMessage(String sample, String kind, String category) {
@@ -420,28 +468,80 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     private boolean isLikelyDuplicate(MessageParser.ParsedTransaction tx) {
         if (tx == null || tx.amount <= 0) return false;
         String src = tx.source == null ? "" : tx.source.toLowerCase(Locale.ROOT);
-        boolean bankAuto = src.contains("sms") || src.contains("notification") || src.contains("bank");
+        String raw = tx.raw == null ? "" : tx.raw.toLowerCase(Locale.ROOT);
+        boolean bankAuto = src.contains("sms") || src.contains("notification") || src.contains("bank") || src.contains("learned")
+                || raw.contains("sar") || raw.contains("sr") || raw.contains("ريال") || raw.contains("شراء") || raw.contains("حوالة");
         if (!bankAuto) return false;
+
         long center = tx.dateMillis > 0 ? tx.dateMillis : System.currentTimeMillis();
-        long from = center - 90L * 60L * 1000L;
-        long to = center + 90L * 60L * 1000L;
+        long from = center - 6L * 60L * 60L * 1000L;
+        long to = center + 6L * 60L * 60L * 1000L;
         SQLiteDatabase db = getReadableDatabase();
-        try (Cursor c = db.rawQuery("SELECT title, merchant, card, type, amount, dateMillis FROM transactions WHERE ABS(amount-?) < 0.01 AND dateMillis BETWEEN ? AND ? ORDER BY dateMillis DESC LIMIT 20", new String[]{String.valueOf(tx.amount), String.valueOf(from), String.valueOf(to)})) {
+        try (Cursor c = db.rawQuery("SELECT title, merchant, card, type, amount, dateMillis, currency, raw, status, affectsBudget FROM transactions WHERE ABS(amount-?) < 0.01 AND dateMillis BETWEEN ? AND ? ORDER BY dateMillis DESC LIMIT 60", new String[]{String.valueOf(tx.amount), String.valueOf(from), String.valueOf(to)})) {
             String inMerchant = norm(tx.merchant + " " + tx.title);
+            String inCompact = compactText(tx.raw + " " + tx.merchant + " " + tx.title);
             String inCard = tx.card == null ? "" : tx.card.trim();
-            String inType = tx.type == null ? "" : tx.type;
+            String inDirection = txDirection(tx.type, tx.status, tx.affectsBudget);
+            String inCur = safe(tx.currency);
             while (c.moveToNext()) {
                 String title = c.getString(0);
                 String merchant = c.getString(1);
                 String card = c.getString(2);
                 String type = c.getString(3);
+                long oldDate = c.getLong(5);
+                String cur = c.getString(6);
+                String oldRaw = c.getString(7);
+                String status = c.getString(8);
+                int affects = c.getInt(9);
+                if (inCur.length() > 0 && cur != null && cur.length() > 0 && !inCur.equalsIgnoreCase(cur)) continue;
+
+                String oldDirection = txDirection(type, status, affects);
+                if (!inDirection.equals(oldDirection)) continue;
+
+                long diff = Math.abs(center - oldDate);
                 String existing = norm(merchant + " " + title);
-                if (inCard.length() > 0 && card != null && inCard.equals(card.trim())) return true;
-                if (inType.equals(type) && existing.length() > 0 && inMerchant.length() > 0 && (existing.contains(inMerchant) || inMerchant.contains(existing))) return true;
-                if (inType.equals(type) && existing.length() == 0 && inMerchant.length() == 0) return true;
+                String oldCompact = compactText(oldRaw + " " + merchant + " " + title);
+
+                // أقوى حالة: نفس المبلغ + نفس آخر 4 أرقام + نفس الاتجاه. ده غالبًا SMS وإشعار لنفس العملية.
+                if (inCard.length() > 0 && card != null && inCard.equals(card.trim()) && diff <= 6L * 60L * 60L * 1000L) return true;
+
+                // نفس التاجر/العنوان خلال 6 ساعات.
+                if (existing.length() > 0 && inMerchant.length() > 0 && (existing.contains(inMerchant) || inMerchant.contains(existing)) && diff <= 6L * 60L * 60L * 1000L) return true;
+
+                // مقارنة نص العملية بعد تنظيف التاريخ والأرقام، مفيدة لما الإشعار مختصر والـ SMS طويل.
+                if (textSimilarity(inCompact, oldCompact) >= 0.52 && diff <= 6L * 60L * 60L * 1000L) return true;
+
+                // لو مفيش تاجر واضح، نفس مبلغ واتجاه خلال 10 دقائق فقط.
+                if (inMerchant.length() == 0 && existing.length() == 0 && diff <= 10L * 60L * 1000L) return true;
             }
         } catch (Exception ignored) {}
         return false;
+    }
+
+    private String txDirection(String type, String status, int affectsBudget) {
+        String t = type == null ? "" : type.toUpperCase(Locale.ROOT);
+        String st = status == null ? "" : status.toUpperCase(Locale.ROOT);
+        if (t.contains("INCOME") || t.contains("INCOMING")) return "income";
+        if (t.contains("DEBT_PAYMENT")) return "income";
+        if (affectsBudget == 1 || t.contains("EXPENSE") || t.contains("PURCHASE") || t.contains("OUTGOING") || t.contains("WITHDRAWAL")) return "expense";
+        if (st.contains("PENDING_INCOMING")) return "income";
+        return "review";
+    }
+
+    private double textSimilarity(String a, String b) {
+        if (a == null || b == null || a.length() == 0 || b.length() == 0) return 0;
+        String[] aa = a.split("\\s+");
+        String[] bb = b.split("\\s+");
+        int common = 0, total = 0;
+        for (String x : aa) {
+            if (x.length() < 3 || x.matches("[0-9]+")) continue;
+            total++;
+            for (String y : bb) {
+                if (x.equals(y)) { common++; break; }
+            }
+        }
+        if (total == 0) return 0;
+        return common / (double) Math.max(1, total);
     }
 
     private String norm(String s) {
@@ -589,6 +689,20 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("title", title == null ? "" : title.trim());
         cv.put("merchant", title == null ? "" : title.trim());
         cv.put("category", category == null || category.trim().isEmpty() ? "عام" : category.trim());
+        cv.put("affectsBudget", affectsBudget);
+        getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+    }
+
+    public void updateTransactionDecision(long id, double amount, String title, String category, String type, String status, int affectsBudget) {
+        ContentValues cv = new ContentValues();
+        if (amount > 0) cv.put("amount", amount);
+        if (title != null) {
+            cv.put("title", title.trim());
+            cv.put("merchant", title.trim());
+        }
+        cv.put("category", category == null || category.trim().isEmpty() ? "عام" : category.trim());
+        cv.put("type", type == null || type.trim().isEmpty() ? "SMART_REVIEW_DECIDED" : type.trim());
+        cv.put("status", status == null || status.trim().isEmpty() ? "CONFIRMED" : status.trim());
         cv.put("affectsBudget", affectsBudget);
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
     }

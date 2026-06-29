@@ -1347,46 +1347,138 @@ public class MainActivity extends Activity {
     }
 
     private void showPending() {
-        setup("مراجعة العمليات"); addHomeButton();
+        setup("مراجعة الرسائل الذكية"); addHomeButton();
         LinearLayout intro = card(pale(ORANGE));
         intro.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
-        intro.addView(text("الأونلاين والوارد مش بيتحسبوا غير بعد موافقتك", 16, true, ORANGE), matchWrap());
-        intro.addView(text("اختار خصم، حفظ فقط، دخل إضافي، أو سداد دين حسب كل عملية.", 12, false, DARK), matchWrap());
+        intro.addView(text("رسائل تحتاج مراجعة قبل ما تتحسب", 18, true, ORANGE), matchWrap());
+        intro.addView(text("أي رسالة بنك جديدة أو غير مؤكدة هتظهر هنا. اعتمدها مرة، والتطبيق هيتعلم شكلها لو اتكررت.", 12, false, DARK), matchWrap());
         root.addView(intro);
 
         List<ExpenseDbHelper.Tx> list = db.getPending();
         if (list.isEmpty()) {
             LinearLayout empty = card();
             empty.addView(text("✅ مفيش عمليات معلقة حاليًا", 18, true, PRIMARY), matchWrap());
-            empty.addView(text("أي شراء أونلاين أو حوالة واردة هتظهر هنا للمراجعة.", 13, false, MUTED), matchWrap());
+            empty.addView(text("الرسائل الجديدة غير المعروفة هتدخل هنا بدل ما تتخصم تلقائيًا.", 13, false, MUTED), matchWrap());
             root.addView(empty);
         }
         for (ExpenseDbHelper.Tx tx : list) {
             LinearLayout c = card();
+            c.setPadding(dp(14), dp(12), dp(14), dp(12));
+            c.setBackground(strokeBg(Color.WHITE, lighten(statusColor(tx.status)), 22, 1));
+
             LinearLayout top = row();
             top.addView(pill(statusArabic(tx.status), statusColor(tx.status)));
             Space sp = new Space(this); top.addView(sp, new LinearLayout.LayoutParams(0, 1, 1));
-            top.addView(text(money(tx.amount), 18, true, DARK));
+            top.addView(text(txMoney(tx), 18, true, DARK));
             c.addView(top, matchWrap());
-            c.addView(text(tx.title, 20, true, DARK), matchWrap());
-            c.addView(text("التاريخ: " + ExpenseDbHelper.date(tx.dateMillis), 13, false, MUTED), matchWrap());
-            if (tx.card != null && tx.card.length() > 0) c.addView(text("البطاقة / الحساب: " + tx.card, 13, false, MUTED), matchWrap());
-            if (tx.extra != null && tx.extra.length() > 0) c.addView(text(tx.extra, 13, false, MUTED), matchWrap());
+
+            c.addView(text(tx.title == null || tx.title.trim().isEmpty() ? "رسالة بنك" : tx.title, 18, true, DARK), matchWrap());
+            String meta = (tx.category == null || tx.category.trim().isEmpty() ? "عام" : tx.category) + " • " + safeCurrency(tx.currency) + " • " + ExpenseDbHelper.date(tx.dateMillis);
+            c.addView(text(meta, 12, false, MUTED), matchWrap());
+            if (tx.card != null && tx.card.length() > 0) c.addView(text("بطاقة/حساب: " + tx.card, 12, false, MUTED), matchWrap());
+            if (tx.extra != null && tx.extra.length() > 0) c.addView(text(tx.extra.replace("category=", "الفئة: ").replace("reviewReason=", "السبب: "), 12, false, MUTED), matchWrap());
+
+            Button smart = btn("مراجعة ذكية وتحديد القرار");
+            smart.setOnClickListener(v -> smartReviewDialog(tx));
+            c.addView(smart);
+
             if ("PENDING_ONLINE".equals(tx.status)) {
-                Button approve = btn("خصم من الميزانية"); approve.setOnClickListener(v -> { db.approveOnline(tx.id); toast("تم الخصم"); showPending(); }); c.addView(approve);
-                Button edit = softBtn("تعديل المبلغ ثم خصم", BLUE); edit.setOnClickListener(v -> editAmountThenApprove(tx)); c.addView(edit);
-                Button save = softBtn("تجاهل / حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); showPending(); }); c.addView(save);
+                Button approve = softBtn("خصم من الميزانية", RED); approve.setOnClickListener(v -> { db.approveOnline(tx.id); autoCloudBackup(); toast("تم الخصم"); showPending(); }); c.addView(approve);
+                Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
             } else if ("PENDING_INCOMING".equals(tx.status)) {
-                Button income = btn("تسجيل كدخل إضافي منفصل"); income.setOnClickListener(v -> { db.markExtraIncome(tx.id); toast("اتسجل دخل إضافي"); showPending(); }); c.addView(income);
+                Button income = softBtn("تسجيل كدخل إضافي", PRIMARY); income.setOnClickListener(v -> { db.markExtraIncome(tx.id); autoCloudBackup(); toast("اتسجل دخل إضافي"); showPending(); }); c.addView(income);
                 Button debt = softBtn("تسجيل كسداد دين", PURPLE); debt.setOnClickListener(v -> chooseDebtForPayment(tx)); c.addView(debt);
-                Button save = softBtn("تجاهل / حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); showPending(); }); c.addView(save);
-            } else if ("PENDING_REVIEW".equals(tx.status)) {
-                Button approve = btn("اعتبارها مصروف وخصمها"); approve.setOnClickListener(v -> { db.approveOnline(tx.id); toast("تم الخصم"); showPending(); }); c.addView(approve);
-                Button edit = softBtn("تعديل المبلغ ثم خصم", BLUE); edit.setOnClickListener(v -> editAmountThenApprove(tx)); c.addView(edit);
-                Button save = softBtn("حفظ فقط بدون خصم", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); showPending(); }); c.addView(save);
+                Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
             }
             root.addView(c);
         }
+    }
+
+    private void smartReviewDialog(ExpenseDbHelper.Tx tx) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(8), dp(16), dp(8));
+
+        box.addView(text("راجع المبلغ والفئة، وبعدها اختار القرار. لو فعلت التعليم، نفس شكل الرسالة هيتعامل بنفس القرار بعد كده.", 13, false, MUTED), matchWrap());
+
+        EditText amount = field("المبلغ", String.valueOf(tx.amount));
+        amount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        final String[] selectedCategory = new String[]{tx.category == null || tx.category.trim().isEmpty() ? "عام" : tx.category};
+        Button category = softBtn("الفئة: " + selectedCategory[0], PURPLE);
+        category.setOnClickListener(v -> categoryPickerDialog(selectedCategory[0], cat -> {
+            selectedCategory[0] = cat;
+            category.setText("الفئة: " + cat);
+        }));
+        CheckBox learn = new CheckBox(this);
+        learn.setText("علم التطبيق نفس شكل الرسالة للمرات الجاية");
+        learn.setTextColor(DARK);
+        learn.setTextSize(14);
+        learn.setTextDirection(View.TEXT_DIRECTION_RTL);
+        learn.setGravity(Gravity.RIGHT);
+        learn.setChecked(true);
+
+        box.addView(label("المبلغ", 13, true));
+        box.addView(amount);
+        box.addView(label("الفئة", 13, true));
+        box.addView(category);
+        box.addView(learn);
+
+        if (tx.raw != null && tx.raw.trim().length() > 0) {
+            TextView rawView = text("نص الرسالة:\n" + tx.raw, 12, false, MUTED);
+            rawView.setPadding(dp(10), dp(8), dp(10), dp(8));
+            rawView.setBackground(strokeBg(Color.rgb(248,250,252), Color.rgb(226,232,240), 16, 1));
+            box.addView(rawView, matchWrap());
+        }
+
+        LinearLayout row1 = row();
+        Button expense = softBtn("خصم", RED);
+        Button income = softBtn("إضافة", PRIMARY);
+        row1.addView(expense, new LinearLayout.LayoutParams(0, dp(54), 1));
+        row1.addView(income, new LinearLayout.LayoutParams(0, dp(54), 1));
+        box.addView(row1, matchWrap());
+
+        LinearLayout row2 = row();
+        Button online = softBtn("أونلاين للمراجعة", BLUE);
+        Button save = softBtn("حفظ فقط", MUTED);
+        row2.addView(online, new LinearLayout.LayoutParams(0, dp(54), 1));
+        row2.addView(save, new LinearLayout.LayoutParams(0, dp(54), 1));
+        box.addView(row2, matchWrap());
+
+        ScrollView sc = new ScrollView(this);
+        sc.addView(box, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        final AlertDialog[] holder = new AlertDialog[1];
+        holder[0] = new AlertDialog.Builder(this).setTitle("مراجعة رسالة البنك").setView(sc).setNegativeButton("إغلاق", null).create();
+
+        expense.setOnClickListener(v -> applySmartReviewDecision(tx, amount.getText().toString(), selectedCategory[0], "EXPENSE", learn.isChecked(), holder[0]));
+        income.setOnClickListener(v -> applySmartReviewDecision(tx, amount.getText().toString(), selectedCategory[0], "INCOME", learn.isChecked(), holder[0]));
+        online.setOnClickListener(v -> applySmartReviewDecision(tx, amount.getText().toString(), selectedCategory[0], "ONLINE", learn.isChecked(), holder[0]));
+        save.setOnClickListener(v -> applySmartReviewDecision(tx, amount.getText().toString(), selectedCategory[0], "SAVE_ONLY", learn.isChecked(), holder[0]));
+
+        holder[0].show();
+    }
+
+    private void applySmartReviewDecision(ExpenseDbHelper.Tx tx, String amountText, String category, String decision, boolean learn, AlertDialog dialog) {
+        double a = parseAmount(amountText);
+        if (a <= 0) a = tx.amount;
+        String title = tx.title == null || tx.title.trim().isEmpty() ? "رسالة بنك" : tx.title.trim();
+        if (learn && tx.raw != null && tx.raw.trim().length() > 0) db.learnBankMessage(tx.raw, decision, category);
+
+        if ("EXPENSE".equals(decision)) {
+            db.updateTransactionDecision(tx.id, a, title, category, "SMART_REVIEW_EXPENSE", "CONFIRMED", 1);
+            toast("تم تسجيلها كخصم");
+        } else if ("INCOME".equals(decision)) {
+            db.updateTransactionDecision(tx.id, a, title, category, "EXTRA_INCOME", "CONFIRMED", 0);
+            toast("تم تسجيلها كدخل إضافي");
+        } else if ("ONLINE".equals(decision)) {
+            db.updateTransactionDecision(tx.id, a, title, category, "ONLINE_PURCHASE", "PENDING_ONLINE", 0);
+            toast("تم نقلها لأونلاين للمراجعة");
+        } else {
+            db.updateTransactionDecision(tx.id, a, title, category, "BANK_SAVED_ONLY", "SAVED_ONLY", 0);
+            toast("تم حفظها بدون تأثير على الميزانية");
+        }
+        autoCloudBackup();
+        if (dialog != null) dialog.dismiss();
+        showPending();
     }
 
     private void editAmountThenApprove(ExpenseDbHelper.Tx tx) {

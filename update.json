@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 26,
-  "latestVersionName": "2.15",
+  "latestVersionCode": 27,
+  "latestVersionName": "2.16",
   "apkUrl": "https://raw.githubusercontent.com/spyzorro/masrofaty7/main/downloads/Masrofaty-latest.apk",
-  "notes": "إصلاح التحميل المباشر بدون الاعتماد على GitHub Releases",
+  "notes": "إصلاح رفع APK داخل مجلد downloads والتحميل المباشر",
   "dataVersion": "2026-06-29",
   "message": "يوجد تحديث جديد متاح الآن"
 }

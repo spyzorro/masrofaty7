@@ -25,6 +25,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -173,7 +175,8 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("currency", tx.currency);
         cv.put("title", tx.title);
         cv.put("merchant", tx.merchant);
-        cv.put("category", guessCategory(tx.title + " " + tx.merchant + " " + tx.raw));
+        String categoryOverride = extractCategoryOverride(tx.extra);
+        cv.put("category", categoryOverride != null ? categoryOverride : guessCategory(tx.title + " " + tx.merchant + " " + tx.raw));
         cv.put("source", tx.source);
         cv.put("raw", tx.raw);
         cv.put("dateMillis", tx.dateMillis);
@@ -183,6 +186,234 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("affectsBudget", tx.affectsBudget);
         cv.put("createdAt", System.currentTimeMillis());
         return db.insertWithOnConflict("transactions", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+
+    private String extractCategoryOverride(String extra) {
+        if (extra == null) return null;
+        String marker = "category=";
+        int i = extra.indexOf(marker);
+        if (i < 0) return null;
+        String cat = extra.substring(i + marker.length()).trim();
+        int end = cat.indexOf(";");
+        if (end >= 0) cat = cat.substring(0, end).trim();
+        return cat.length() == 0 ? null : cat;
+    }
+
+    public MessageParser.ParsedTransaction parseBankMessageSmart(String raw) {
+        MessageParser.ParsedTransaction tx = MessageParser.parseBankMessage(raw);
+        JSONObject rule = matchLearnedBankRule(raw);
+        if (rule != null) {
+            if (tx == null) tx = parseLearnedBankMessage(raw, rule);
+            else applyLearnedRule(tx, rule);
+        }
+        return tx;
+    }
+
+    public void learnBankMessage(String sample, String kind, String category) {
+        if (sample == null || sample.trim().length() == 0) return;
+        JSONArray arr = getLearnedRulesArray();
+        JSONObject rule = new JSONObject();
+        try {
+            rule.put("keywords", buildRuleKeywords(sample));
+            rule.put("kind", kind == null ? "EXPENSE" : kind);
+            rule.put("category", category == null || category.trim().isEmpty() ? "عام" : category.trim());
+            rule.put("sample", sample.trim());
+            rule.put("createdAt", System.currentTimeMillis());
+            arr.put(rule);
+            setSetting("bank_learning_rules", arr.toString());
+        } catch (Exception ignored) {}
+    }
+
+    public int learnedBankRuleCount() {
+        return getLearnedRulesArray().length();
+    }
+
+    public void clearLearnedBankRules() {
+        setSetting("bank_learning_rules", "[]");
+    }
+
+    private JSONArray getLearnedRulesArray() {
+        try { return new JSONArray(getSetting("bank_learning_rules", "[]")); }
+        catch (Exception e) { return new JSONArray(); }
+    }
+
+    private JSONObject matchLearnedBankRule(String raw) {
+        if (raw == null) return null;
+        String n = normalizeRuleText(raw);
+        JSONArray arr = getLearnedRulesArray();
+        JSONObject best = null;
+        int bestScore = 0;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            String[] keys = o.optString("keywords", "").split("\\|");
+            int total = 0, score = 0;
+            for (String k : keys) {
+                k = normalizeRuleText(k);
+                if (k.length() < 2) continue;
+                total++;
+                if (n.contains(k)) score++;
+            }
+            int need = total <= 2 ? total : Math.max(2, (int)Math.ceil(total * 0.55));
+            if (total > 0 && score >= need && score > bestScore) {
+                bestScore = score;
+                best = o;
+            }
+        }
+        return best;
+    }
+
+    private void applyLearnedRule(MessageParser.ParsedTransaction tx, JSONObject rule) {
+        if (tx == null || rule == null) return;
+        String kind = rule.optString("kind", "EXPENSE");
+        if ("INCOME".equals(kind)) {
+            tx.type = "EXTRA_INCOME";
+            tx.status = "CONFIRMED";
+            tx.affectsBudget = 0;
+            tx.title = "دخل بنكي - " + safeTitle(tx.merchant, tx.title);
+        } else if ("ONLINE".equals(kind)) {
+            tx.type = "ONLINE_PURCHASE";
+            tx.status = "PENDING_ONLINE";
+            tx.affectsBudget = 0;
+            tx.title = "شراء أونلاين للمراجعة - " + safeTitle(tx.merchant, tx.title);
+        } else if ("SAVE_ONLY".equals(kind)) {
+            tx.type = "BANK_SAVED_ONLY";
+            tx.status = "SAVED_ONLY";
+            tx.affectsBudget = 0;
+            tx.title = "عملية محفوظة فقط - " + safeTitle(tx.merchant, tx.title);
+        } else {
+            tx.type = "LEARNED_BANK_EXPENSE";
+            tx.status = "CONFIRMED";
+            tx.affectsBudget = 1;
+            tx.title = "خصم بنكي - " + safeTitle(tx.merchant, tx.title);
+        }
+        String cat = rule.optString("category", "عام").trim();
+        if (cat.length() > 0) tx.extra = appendExtra(tx.extra, "category=" + cat);
+    }
+
+    private MessageParser.ParsedTransaction parseLearnedBankMessage(String raw, JSONObject rule) {
+        double amount = findLearnedAmount(raw);
+        if (amount <= 0) return null;
+        MessageParser.ParsedTransaction tx = new MessageParser.ParsedTransaction();
+        tx.raw = raw == null ? "" : raw.trim();
+        tx.amount = amount;
+        tx.currency = guessCurrency(tx.raw);
+        tx.dateMillis = parseLearnedDate(tx.raw);
+        tx.fingerprint = MessageParser.sha256("learned|" + normalizeRuleText(tx.raw));
+        tx.card = findLearnedCard(tx.raw);
+        tx.merchant = findLearnedName(tx.raw);
+        tx.source = "learned_bank_message";
+        tx.extra = "";
+        applyLearnedRule(tx, rule);
+        return tx;
+    }
+
+    private String appendExtra(String base, String add) {
+        if (base == null || base.trim().isEmpty()) return add;
+        if (base.contains(add)) return base;
+        return base + ";" + add;
+    }
+
+    private String safeTitle(String merchant, String title) {
+        if (merchant != null && merchant.trim().length() > 0) return merchant.trim();
+        if (title != null && title.trim().length() > 0) return title.trim();
+        return "رسالة بنك";
+    }
+
+    private String buildRuleKeywords(String sample) {
+        String n = normalizeRuleText(sample);
+        String[] parts = n.split("\\s+");
+        List<String> keys = new ArrayList<>();
+        String stop = " sar sr egp usd eur ريال جنيه مبلغ المبلغ رصيد بطاقة عبر لدى لدي من الى إلى في on at the and تم تمت عملية عميل عزيزي dear customer account acct no رقم ";
+        for (String p : parts) {
+            p = p.trim();
+            if (p.length() < 3) continue;
+            if (p.matches("[0-9]+")) continue;
+            if (stop.contains(" " + p + " ")) continue;
+            if (!keys.contains(p)) keys.add(p);
+            if (keys.size() >= 7) break;
+        }
+        if (keys.size() == 0) keys.add(n.length() > 20 ? n.substring(0, 20) : n);
+        StringBuilder sb = new StringBuilder();
+        for (String k : keys) {
+            if (sb.length() > 0) sb.append("|");
+            sb.append(k);
+        }
+        return sb.toString();
+    }
+
+    private String normalizeRuleText(String s) {
+        if (s == null) return "";
+        return s.toLowerCase(Locale.ROOT)
+                .replace('\u061C', ' ')
+                .replace('\u200F', ' ')
+                .replace('\u200E', ' ')
+                .replaceAll("[^\\p{L}\\p{Nd}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private double findLearnedAmount(String text) {
+        if (text == null) return 0;
+        String[] regexes = {
+                "(?:اجمالي|إجمالي|مبلغ|المبلغ|بقيمة|بمبلغ|خصم|دفع|شراء|سحب|ايداع|إيداع|تحويل|حوالة)\\s*[:：]?\\s*(?:SAR|SR|ريال|EGP|جنيه)?\\s*([0-9]+(?:[\\.,][0-9]+)?)",
+                "(?:SAR|SR|ريال|EGP|جنيه)\\s*([0-9]+(?:[\\.,][0-9]+)?)",
+                "([0-9]+(?:[\\.,][0-9]+)?)\\s*(?:SAR|SR|ريال|EGP|جنيه)"
+        };
+        for (String r : regexes) {
+            Matcher m = Pattern.compile(r, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(text);
+            if (m.find()) return parseLearnedDouble(m.group(1));
+        }
+        Matcher m = Pattern.compile("([0-9]+(?:[\\.,][0-9]+)?)").matcher(text);
+        return m.find() ? parseLearnedDouble(m.group(1)) : 0;
+    }
+
+    private double parseLearnedDouble(String s) {
+        try { return Double.parseDouble(s.replace(",", ".")); } catch (Exception e) { return 0; }
+    }
+
+    private String guessCurrency(String text) {
+        String t = text == null ? "" : text.toLowerCase(Locale.ROOT);
+        return (t.contains("egp") || t.contains("جنيه")) ? "EGP" : "SAR";
+    }
+
+    private String findLearnedCard(String text) {
+        if (text == null) return "";
+        Matcher m = Pattern.compile("(?:بطاقة|card|عبر|من|لـ|ending)\\s*[:：;]?\\s*([0-9]{4})", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(text);
+        return m.find() ? m.group(1) : "";
+    }
+
+    private String findLearnedName(String text) {
+        if (text == null) return "رسالة بنك";
+        String[] markers = {"لدى", "لدي", "لـ", "الى", "إلى", "من", "merchant", "at"};
+        for (String marker : markers) {
+            Matcher m = Pattern.compile(Pattern.quote(marker) + "\\s*[:：;]?\\s*([^\\n]+)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(text);
+            if (m.find()) {
+                String v = m.group(1).replaceAll("[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}.*", "").trim();
+                if (v.length() > 0) return v.length() > 40 ? v.substring(0, 40) : v;
+            }
+        }
+        String[] lines = text.split("\\n");
+        for (String line : lines) {
+            line = line.trim();
+            if (line.length() > 3 && !line.matches(".*[0-9].*")) return line.length() > 40 ? line.substring(0, 40) : line;
+        }
+        return "رسالة بنك";
+    }
+
+    private long parseLearnedDate(String text) {
+        if (text == null) return System.currentTimeMillis();
+        Matcher m = Pattern.compile("([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\\s+([0-9]{1,2}:[0-9]{2})").matcher(text);
+        if (m.find()) {
+            String v = m.group(1) + " " + m.group(2);
+            String[] formats = {"d/M/yy HH:mm", "d/M/yyyy HH:mm"};
+            for (String f : formats) {
+                try { Date d = new SimpleDateFormat(f, Locale.US).parse(v); if (d != null) return d.getTime(); }
+                catch (Exception ignored) {}
+            }
+        }
+        return System.currentTimeMillis();
     }
 
 

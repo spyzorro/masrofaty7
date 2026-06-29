@@ -181,10 +181,10 @@ public class MainActivity extends Activity {
         nav.setBackground(strokeBg(Color.WHITE, Color.rgb(222, 234, 230), 0, 1));
         nav.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         addBottomButton(nav, "➕\nإضافة", PRIMARY, v -> openAddMenu());
-        addBottomButton(nav, "📋\nالسجل", BLUE, v -> showLog());
+        addBottomButton(nav, "📋\nالسجل/مراجعة", BLUE, v -> openRecordsMenu());
         addBottomButton(nav, "🏠\nالرئيسية", PRIMARY_DARK, v -> showHome());
-        addBottomButton(nav, "💰\nالفلوس", PURPLE, v -> openMoneyMenu());
-        addBottomButton(nav, "☰\nالمزيد", MUTED, v -> openMainMenu());
+        addBottomButton(nav, "💰\nفلوس/كاش", PURPLE, v -> openMoneyMenu());
+        addBottomButton(nav, "⚙️\nالمزيد", MUTED, v -> openMainMenu());
         return nav;
     }
 
@@ -207,7 +207,17 @@ public class MainActivity extends Activity {
         addMenuButton(box, "إضافة بالفويس", PRIMARY, v -> { dialog.dismiss(); startVoice(); });
         addMenuButton(box, "دخل إضافي منفصل", PRIMARY_DARK, v -> { dialog.dismiss(); extraIncomeDialog(); });
         addMenuButton(box, "اشتراك شهري", PURPLE, v -> { dialog.dismiss(); addSubscriptionDialog(); });
-        addMenuButton(box, "تحليل رسالة بنك يدويًا", ORANGE, v -> { dialog.dismiss(); testMessageDialog(); });
+        addMenuButton(box, "تعليم/تحليل رسالة بنك", ORANGE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
+        dialog.show();
+    }
+
+    private void openRecordsMenu() {
+        LinearLayout box = menuBox();
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("السجل والمراجعة").setView(box).create();
+        addMenuButton(box, "سجل العمليات", BLUE, v -> { dialog.dismiss(); showLog(); });
+        addMenuButton(box, "عمليات للمراجعة", ORANGE, v -> { dialog.dismiss(); showPending(); });
+        addMenuButton(box, "تعليم/تحليل رسالة بنك", PURPLE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
+        addMenuButton(box, "أرشيف الشهور", PRIMARY_DARK, v -> { dialog.dismiss(); showMonthArchive(); });
         dialog.show();
     }
 
@@ -216,6 +226,7 @@ public class MainActivity extends Activity {
         final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("الفلوس والديون").setView(box).create();
         addMenuButton(box, "الديون والمواعيد", PURPLE, v -> { dialog.dismiss(); showDebts(); });
         addMenuButton(box, "محفظة الكاش", PRIMARY_DARK, v -> { dialog.dismiss(); showCashWallet(); });
+        addMenuButton(box, "الاشتراكات الشهرية", BLUE, v -> { dialog.dismiss(); showSubscriptions(); });
         addMenuButton(box, "مراجعة الأونلاين والوارد", ORANGE, v -> { dialog.dismiss(); showPending(); });
         addMenuButton(box, "تعديل الميزانية والمصروف", PRIMARY, v -> { dialog.dismiss(); budgetAndSpentDialog(); });
         dialog.show();
@@ -373,85 +384,50 @@ public class MainActivity extends Activity {
 
     private void openMainMenu() {
         ScrollView sc = new ScrollView(this);
-        sc.setFillViewport(false);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(8), dp(16), dp(8));
+        box.setPadding(dp(14), dp(10), dp(14), dp(10));
         sc.addView(box, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("القائمة").setView(sc).create();
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("المزيد").setView(sc).create();
 
-        Button home = softBtn("الرئيسية", PRIMARY_DARK);
-        home.setOnClickListener(v -> { dialog.dismiss(); showHome(); });
-        box.addView(home);
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.VERTICAL);
+        head.setPadding(dp(14), dp(12), dp(14), dp(12));
+        head.setBackground(gradient(PRIMARY, PRIMARY_DARK, 22));
+        head.addView(text("إعدادات وأدوات مصروفاتي", 18, true, Color.WHITE), matchWrap());
+        head.addView(text("الحاجات الأساسية موجودة في الأزرار اللي تحت، وهنا الأدوات والإعدادات بس.", 12, false, Color.rgb(230, 255, 248)), matchWrap());
+        box.addView(head, cardLp());
 
-        Button budget = softBtn("تعديل الميزانية والمصروف", PRIMARY);
-        budget.setOnClickListener(v -> { dialog.dismiss(); budgetAndSpentDialog(); });
-        box.addView(budget);
+        addMoreTile(box, "مزامنة Google والنسخ الاحتياطي", "تسجيل الدخول، حفظ واسترجاع الداتا، واستيراد ملف", PRIMARY, v -> { dialog.dismiss(); showGoogleSyncCenter(); });
+        addMoreTile(box, "التحديثات", "فحص سريع للتحديثات من GitHub", BLUE, v -> { dialog.dismiss(); showUpdateCenter(); });
+        addMoreTile(box, "الإعدادات والخصوصية", "القفل، وضع الخصوصية، التذكيرات، والتنبيهات", ORANGE, v -> { dialog.dismiss(); showSecurityAndReminderSettings(); });
+        addMoreTile(box, "اللغة والعملة", "عربي / English واختيار ريال أو جنيه", PRIMARY_DARK, v -> { dialog.dismiss(); openLanguageCurrencyMenu(); });
 
-        Button pendingBtn = softBtn("مراجعة الأونلاين والوارد", ORANGE);
-        pendingBtn.setOnClickListener(v -> { dialog.dismiss(); showPending(); });
-        box.addView(pendingBtn);
-
-        Button debtsBtn = softBtn("الديون والمواعيد", PURPLE);
-        debtsBtn.setOnClickListener(v -> { dialog.dismiss(); showDebts(); });
-        box.addView(debtsBtn);
-
-        Button subsBtn = softBtn("الاشتراكات الشهرية", BLUE);
-        subsBtn.setOnClickListener(v -> { dialog.dismiss(); showSubscriptions(); });
-        box.addView(subsBtn);
-
-        Button reminderSettings = softBtn("إعدادات التذكير والقفل", ORANGE);
-        reminderSettings.setOnClickListener(v -> { dialog.dismiss(); showSecurityAndReminderSettings(); });
-        box.addView(reminderSettings);
-
-        Button currencyBtn = softBtn(L("اختيار العملة", "Currency"), PRIMARY_DARK);
-        currencyBtn.setOnClickListener(v -> { dialog.dismiss(); currencyDialog(); });
-        box.addView(currencyBtn);
-
-        Button langBtn = softBtn(L("اللغة / Language", "Language / اللغة"), PRIMARY_DARK);
-        langBtn.setOnClickListener(v -> { dialog.dismiss(); languageDialog(); });
-        box.addView(langBtn);
-
-        Button catBtn = softBtn(L("ميزانيات الفئات", "Category budgets"), PURPLE);
-        catBtn.setOnClickListener(v -> { dialog.dismiss(); showCategoryBudgets(); });
-        box.addView(catBtn);
-
-        Button archiveBtn = softBtn(L("أرشيف الشهور", "Monthly archive"), ORANGE);
-        archiveBtn.setOnClickListener(v -> { dialog.dismiss(); showMonthArchive(); });
-        box.addView(archiveBtn);
-
-        Button cashBtn = softBtn(L("محفظة الكاش", "Cash wallet"), PRIMARY);
-        cashBtn.setOnClickListener(v -> { dialog.dismiss(); showCashWallet(); });
-        box.addView(cashBtn);
-
-        Button logBtn = softBtn("سجل العمليات", BLUE);
-        logBtn.setOnClickListener(v -> { dialog.dismiss(); showLog(); });
-        box.addView(logBtn);
-
-        Button syncBtn = softBtn("مزامنة جوجل وحفظ الداتا", PRIMARY);
-        syncBtn.setOnClickListener(v -> { dialog.dismiss(); showGoogleSyncCenter(); });
-        box.addView(syncBtn);
-
-        Button updateBtn = softBtn("مركز التحديثات", PRIMARY);
-        updateBtn.setOnClickListener(v -> { dialog.dismiss(); showUpdateCenter(); });
-        box.addView(updateBtn);
-
-        Button test = softBtn("تحليل رسالة بنك يدويًا", MUTED);
-        test.setOnClickListener(v -> { dialog.dismiss(); testMessageDialog(); });
-        box.addView(test);
-
-
-        dialog.setOnShowListener(d -> {
-            Window w = dialog.getWindow();
-            if (w != null) {
-                View decor = w.getDecorView();
-                ViewGroup.LayoutParams lp = decor.getLayoutParams();
-                decor.setMinimumHeight(dp(420));
-            }
-        });
         dialog.show();
     }
 
+    private void addMoreTile(LinearLayout box, String title, String subtitle, int color, View.OnClickListener click) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setPadding(dp(14), dp(12), dp(14), dp(12));
+        tile.setBackground(strokeBg(pale(color), lighten(color), 20, 1));
+        tile.setClickable(true);
+        tile.setOnClickListener(click);
+        if (Build.VERSION.SDK_INT >= 21) tile.setElevation(dp(1));
+        tile.addView(text(title, 16, true, color), matchWrap());
+        tile.addView(text(subtitle, 12, false, DARK), matchWrap());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(6), 0, dp(8));
+        box.addView(tile, lp);
+    }
+
+    private void openLanguageCurrencyMenu() {
+        LinearLayout box = menuBox();
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("اللغة والعملة").setView(box).create();
+        addMenuButton(box, L("اختيار العملة", "Currency"), PRIMARY_DARK, v -> { dialog.dismiss(); currencyDialog(); });
+        addMenuButton(box, L("اللغة / Language", "Language / اللغة"), BLUE, v -> { dialog.dismiss(); languageDialog(); });
+        dialog.show();
+    }
 
 
     private void showGoogleSyncCenter() {
@@ -565,11 +541,33 @@ public class MainActivity extends Activity {
 
     private String defaultUpdateUrl() {
         String saved = db.getSetting("update_json_url", "").trim();
-        if (saved.length() > 0) return saved;
+        if (isValidUpdateUrl(saved)) return saved;
+
         try {
-            String v = getString(getResources().getIdentifier("update_json_url", "string", getPackageName())).trim();
-            return v == null ? "" : v;
-        } catch (Exception e) { return ""; }
+            int id = getResources().getIdentifier("update_json_url", "string", getPackageName());
+            String v = id == 0 ? "" : getString(id).trim();
+            if (isValidUpdateUrl(v)) return v;
+        } catch (Exception ignored) {}
+
+        try {
+            String repo = BuildConfig.GITHUB_REPOSITORY == null ? "" : BuildConfig.GITHUB_REPOSITORY.trim();
+            String branch = BuildConfig.GITHUB_BRANCH == null ? "main" : BuildConfig.GITHUB_BRANCH.trim();
+            if (repo.length() > 0 && repo.contains("/")) {
+                if (branch.length() == 0) branch = "main";
+                return "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json";
+            }
+        } catch (Exception ignored) {}
+
+        return "";
+    }
+
+    private boolean isValidUpdateUrl(String url) {
+        if (url == null) return false;
+        String u = url.trim();
+        if (u.length() == 0) return false;
+        if (!u.startsWith("http://") && !u.startsWith("https://")) return false;
+        if (u.contains("USERNAME") || u.contains("REPO") || u.contains("رابط")) return false;
+        return true;
     }
 
     private void showUpdateCenter() {
@@ -621,7 +619,7 @@ public class MainActivity extends Activity {
 
     private void checkForUpdates(String updateUrl) {
         if (updateUrl == null || updateUrl.trim().isEmpty()) {
-            toast("التحديث غير مفعل حاليًا");
+            toast("رابط التحديث غير جاهز. ابني النسخة من GitHub Actions أو أضف update.json");
             return;
         }
         toast("جاري فحص التحديث...");
@@ -1174,26 +1172,91 @@ public class MainActivity extends Activity {
     }
 
     private void testMessageDialog() {
+        bankMessageTrainerDialog();
+    }
+
+    private void bankMessageTrainerDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(8), dp(14), dp(8));
+
+        TextView hint = text("الصق رسالة بنك جديدة، واختار هل هي خصم أو إضافة. بعد كده أي رسالة بنفس الشكل هتتسجل تلقائيًا.", 13, false, MUTED);
+        box.addView(hint, matchWrap());
+        box.addView(pill("القواعد المحفوظة: " + db.learnedBankRuleCount(), PURPLE), matchWrap());
+
         final EditText input = new EditText(this);
-        input.setMinLines(8);
+        input.setMinLines(7);
         input.setGravity(Gravity.RIGHT);
         input.setTextDirection(View.TEXT_DIRECTION_RTL);
-        input.setHint("الصق رسالة البنك هنا للاختبار");
-        new AlertDialog.Builder(this)
-                .setTitle("اختبار رسالة بنك")
-                .setView(input)
-                .setPositiveButton("تحليل وحفظ", (d, w) -> {
-                    MessageParser.ParsedTransaction tx = MessageParser.parseBankMessage(input.getText().toString());
-                    if (tx == null) { toast("الرسالة غير معروفة أو لا يوجد مبلغ"); return; }
-                    long id = db.insertParsed(tx);
-                    if (id == -1) toast("العملية مكررة وتم تجاهلها"); else {
-                        toast("تم حفظ: " + tx.title);
-                        if (tx.affectsBudget == 1 && db.isAbnormalExpense(tx.amount)) toast("تنبيه: مصروف كبير وغير معتاد");
-                    }
-                    autoCloudBackup();
-                    showHome();
-                })
-                .setNegativeButton("إلغاء", null).show();
+        input.setHint("الصق رسالة البنك هنا");
+        box.addView(input, matchWrap());
+
+        final String[] selectedCategory = new String[]{"عام"};
+        Button category = softBtn("الفئة: " + selectedCategory[0], PURPLE);
+        category.setOnClickListener(v -> categoryPickerDialog(selectedCategory[0], cat -> {
+            selectedCategory[0] = cat;
+            category.setText("الفئة: " + cat);
+        }));
+        box.addView(category);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this).setTitle("تعليم رسائل البنك").setView(box).setNegativeButton("إغلاق", null).create();
+
+        Button analyze = btn("تحليل وحفظ مرة واحدة");
+        analyze.setOnClickListener(v -> {
+            String raw = input.getText().toString();
+            if (raw.trim().isEmpty()) { toast("الصق الرسالة الأول"); return; }
+            MessageParser.ParsedTransaction tx = db.parseBankMessageSmart(raw);
+            if (tx == null) { toast("مش قادر أفهم الرسالة، علمهالي كخصم أو إضافة"); return; }
+            long id = db.insertParsed(tx);
+            if (id == -1 || id == -2) toast("العملية مكررة وتم تجاهلها"); else toast("تم حفظ: " + tx.title);
+            autoCloudBackup();
+            dialog.dismiss();
+            showHome();
+        });
+        box.addView(analyze);
+
+        LinearLayout grid1 = row();
+        Button exp = softBtn("تعليمها كخصم", ORANGE);
+        exp.setOnClickListener(v -> learnBankRuleAndSave(input.getText().toString(), "EXPENSE", selectedCategory[0], dialog));
+        Button inc = softBtn("تعليمها كإضافة", PRIMARY);
+        inc.setOnClickListener(v -> learnBankRuleAndSave(input.getText().toString(), "INCOME", selectedCategory[0], dialog));
+        grid1.addView(exp, new LinearLayout.LayoutParams(0, dp(54), 1));
+        grid1.addView(inc, new LinearLayout.LayoutParams(0, dp(54), 1));
+        box.addView(grid1, matchWrap());
+
+        LinearLayout grid2 = row();
+        Button online = softBtn("أونلاين للمراجعة", BLUE);
+        online.setOnClickListener(v -> learnBankRuleAndSave(input.getText().toString(), "ONLINE", selectedCategory[0], dialog));
+        Button saved = softBtn("حفظ فقط", MUTED);
+        saved.setOnClickListener(v -> learnBankRuleAndSave(input.getText().toString(), "SAVE_ONLY", selectedCategory[0], dialog));
+        grid2.addView(online, new LinearLayout.LayoutParams(0, dp(54), 1));
+        grid2.addView(saved, new LinearLayout.LayoutParams(0, dp(54), 1));
+        box.addView(grid2, matchWrap());
+
+        Button clear = softBtn("مسح كل قواعد رسائل البنك المتعلمة", RED);
+        clear.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("تأكيد المسح")
+                .setMessage("هيتم مسح القواعد المتعلمة فقط، مش السجل.")
+                .setPositiveButton("مسح", (d, w) -> { db.clearLearnedBankRules(); toast("تم مسح القواعد"); dialog.dismiss(); })
+                .setNegativeButton("إلغاء", null).show());
+        box.addView(clear);
+
+        dialog.show();
+    }
+
+    private void learnBankRuleAndSave(String raw, String kind, String category, AlertDialog dialog) {
+        if (raw == null || raw.trim().isEmpty()) { toast("الصق رسالة البنك الأول"); return; }
+        db.learnBankMessage(raw, kind, category);
+        MessageParser.ParsedTransaction tx = db.parseBankMessageSmart(raw);
+        long id = -1;
+        if (tx != null) id = db.insertParsed(tx);
+        autoCloudBackup();
+        String kindName = "EXPENSE".equals(kind) ? "خصم" : ("INCOME".equals(kind) ? "إضافة" : ("ONLINE".equals(kind) ? "أونلاين للمراجعة" : "حفظ فقط"));
+        if (tx == null) toast("اتعلم شكل الرسالة كـ " + kindName + "، لكن لم يتم حفظ العملية لعدم وجود مبلغ واضح");
+        else if (id == -1 || id == -2) toast("اتعلم شكل الرسالة كـ " + kindName + "، والعملية الحالية مكررة");
+        else toast("اتعلم شكل الرسالة واتحفظت كـ " + kindName);
+        if (dialog != null) dialog.dismiss();
+        showHome();
     }
 
     private void showPending() {

@@ -1,5 +1,8 @@
 plugins { id 'com.android.application' }
 
+def githubRepository = System.getenv("GITHUB_REPOSITORY") ?: ""
+def githubBranch = System.getenv("GITHUB_REF_NAME") ?: "main"
+
 android {
     namespace 'com.mohamed.expenseguard'
     compileSdk 35
@@ -12,8 +15,10 @@ android {
         applicationId 'com.mohamed.expenseguard'
         minSdk 26
         targetSdk 35
-        versionCode 15
-        versionName '2.4'
+        versionCode 17
+        versionName '2.6'
+        buildConfigField "String", "GITHUB_REPOSITORY", "\"${githubRepository}\""
+        buildConfigField "String", "GITHUB_BRANCH", "\"${githubBranch}\""
     }
 
     signingConfigs {

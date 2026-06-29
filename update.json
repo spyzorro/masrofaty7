@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 16,
-  "latestVersionName": "2.5",
-  "apkUrl": "https://github.com/USERNAME/REPO/releases/download/v2.5/Masrofaty-v2.5.apk",
-  "notes": "تحسين قائمة المزيد، تنظيم الأزرار السفلية، وتعليم رسائل البنك الجديدة كخصم أو إضافة",
+  "latestVersionCode": 17,
+  "latestVersionName": "2.6",
+  "apkUrl": "ضع رابط APK من GitHub Releases هنا لو أول مرة فقط",
+  "notes": "تفعيل التحديث التلقائي من GitHub حتى لو update_json_url فارغ داخل strings.xml",
   "dataVersion": "2026-06-29",
-  "message": "تحديث جديد متاح لتطبيق مصروفاتي"
+  "message": "يوجد تحديث جديد متاح الآن"
 }

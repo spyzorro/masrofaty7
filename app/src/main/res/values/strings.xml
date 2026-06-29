@@ -1,6 +1,6 @@
 <resources>
     <string name="app_name">مصروفاتي</string>
-    <!-- GitHub Actions هيحط رابط update.json تلقائيًا وقت البناء -->
+    <!-- يفضل يفضل فارغًا: التطبيق سيولّد رابط update.json تلقائيًا من GitHub Actions -->
     <string name="update_json_url"></string>
     <string name="firebase_api_key"></string>
     <string name="firebase_app_id"></string>

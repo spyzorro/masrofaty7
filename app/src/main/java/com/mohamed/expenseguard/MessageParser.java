@@ -16,6 +16,7 @@ public class MessageParser {
         public String currency = "SAR";
         public String title;
         public String merchant;
+        public String category = "";
         public String card;
         public String source = "bank_message";
         public String raw;

@@ -176,7 +176,11 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("title", tx.title);
         cv.put("merchant", tx.merchant);
         String categoryOverride = extractCategoryOverride(tx.extra);
-        cv.put("category", categoryOverride != null ? categoryOverride : guessCategory(tx.title + " " + tx.merchant + " " + tx.raw));
+        if (tx.category != null && tx.category.trim().length() > 0) {
+            cv.put("category", tx.category.trim());
+        } else {
+            cv.put("category", categoryOverride != null ? categoryOverride : guessCategory(tx.title + " " + tx.merchant + " " + tx.raw));
+        }
         cv.put("source", tx.source);
         cv.put("raw", tx.raw);
         cv.put("dateMillis", tx.dateMillis);

@@ -1063,6 +1063,38 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         }
     }
 
+    public CategoryBudgetAlert getCategoryBudgetAlert(String category, double threshold) {
+        if (category == null || category.trim().isEmpty()) return null;
+        SQLiteDatabase db = getReadableDatabase();
+        try (Cursor c = db.rawQuery("SELECT * FROM budget_categories WHERE active=1 AND name=? LIMIT 1", new String[]{category.trim()})) {
+            if (!c.moveToFirst()) return null;
+            BudgetCategory bc = BudgetCategory.from(c);
+            if (bc.monthlyLimit <= 0) return null;
+            double spent = getCategorySpent(bc.name);
+            double pct = spent / Math.max(1, bc.monthlyLimit);
+            if (pct < threshold) return null;
+            return new CategoryBudgetAlert(bc.name, bc.monthlyLimit, spent, pct);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public List<CategoryBudgetAlert> getCategoryBudgetAlerts(double threshold) {
+        List<CategoryBudgetAlert> out = new ArrayList<>();
+        for (BudgetCategory bc : getBudgetCategories()) {
+            if (bc.monthlyLimit <= 0) continue;
+            double spent = getCategorySpent(bc.name);
+            double pct = spent / Math.max(1, bc.monthlyLimit);
+            if (pct >= threshold) out.add(new CategoryBudgetAlert(bc.name, bc.monthlyLimit, spent, pct));
+        }
+        return out;
+    }
+
+    public double getCategoryBudgetLimit(String category) {
+        CategoryBudgetAlert a = getCategoryBudgetAlert(category, 0.0);
+        return a == null ? 0 : a.limit;
+    }
+
     public double getCashBalance() { return getDoubleSetting("cash_balance", 0); }
     public void setCashBalance(double value) { setSetting("cash_balance", String.valueOf(Math.max(0, value))); }
     public void addCash(double amount, String note) {
@@ -1441,6 +1473,19 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     public static class CatTotal {
         public String category;
         public double total;
+    }
+
+    public static class CategoryBudgetAlert {
+        public String category;
+        public double limit;
+        public double spent;
+        public double percent;
+        public CategoryBudgetAlert(String category, double limit, double spent, double percent) {
+            this.category = category;
+            this.limit = limit;
+            this.spent = spent;
+            this.percent = percent;
+        }
     }
 
     public static class BudgetCategory {

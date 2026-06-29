@@ -6,6 +6,10 @@ import android.app.AlertDialog;
 import android.app.AlarmManager;
 import android.app.DownloadManager;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
+import android.database.Cursor;
 import android.app.KeyguardManager;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -83,6 +87,9 @@ public class MainActivity extends Activity {
     private long pendingDebtScreenshotDebtId = -1;
     private double pendingDebtScreenshotAmount = 0;
     private String pendingDebtScreenshotNote = "";
+    private long updateDownloadId = -1L;
+    private String updateDownloadFileName = "";
+    private BroadcastReceiver updateDownloadReceiver;
 
     private boolean isEn() { return db != null && "en".equals(db.getSetting("language", "ar")); }
     private String L(String ar, String en) { return isEn() ? en : ar; }
@@ -96,6 +103,7 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         styleSystemBars();
         requestNeededPermissions();
+        registerUpdateDownloadReceiver();
         showHome();
         if (restoredLocal) toast("تم استرجاع نسخة محلية تلقائيًا");
         else maybePromptBackupRestoreOnFreshInstall();
@@ -114,6 +122,14 @@ public class MainActivity extends Activity {
         super.onPause();
         if ("1".equals(db.getSetting("app_lock_enabled", "0"))) appUnlocked = false;
         autoCloudBackup();
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        if (updateDownloadReceiver != null) {
+            try { unregisterReceiver(updateDownloadReceiver); } catch (Exception ignored) {}
+            updateDownloadReceiver = null;
+        }
     }
 
     private void styleSystemBars() {
@@ -211,6 +227,7 @@ public class MainActivity extends Activity {
         ScrollView sc = wrapMenu(box);
         final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
         addMenuTile(box, "إضافة كتابة", "مثال واحد + اختيار الفئة", "➕", BLUE, v -> { dialog.dismiss(); manualDialog(); });
+        addMenuTile(box, "عملية معلقة", "احفظ عملية مش متأكد منها للمراجعة بعدين", "⏳", ORANGE, v -> { dialog.dismiss(); pendingManualDialog(); });
         addMenuTile(box, "إضافة بالفويس", "سجل مصروفك بالصوت بسرعة", "🎙️", PRIMARY, v -> { dialog.dismiss(); startVoice(); });
         addMenuTile(box, "دخل إضافي", "أضف أي مبلغ دخل الشهر ده غير الميزانية", "💵", PRIMARY_DARK, v -> { dialog.dismiss(); extraIncomeDialog(); });
         addMenuTile(box, "اشتراك شهري", "Google / Netflix / أي خصم شهري متكرر", "🔁", PURPLE, v -> { dialog.dismiss(); addSubscriptionDialog(); });
@@ -223,7 +240,7 @@ public class MainActivity extends Activity {
         ScrollView sc = wrapMenu(box);
         final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
         addMenuTile(box, "سجل العمليات", "كل عملية مسجلة ومعاها العملة والفئة", "📋", BLUE, v -> { dialog.dismiss(); showLog(); });
-        addMenuTile(box, "عمليات للمراجعة", "مراجعة الأونلاين والوارد قبل الحفظ", "⚠️", ORANGE, v -> { dialog.dismiss(); showPending(); });
+        addMenuTile(box, "عمليات معلقة ومراجعة", "اعتمد أو احذف أي عملية مش متأكد منها", "⚠️", ORANGE, v -> { dialog.dismiss(); showPending(); });
         addMenuTile(box, "تعليم رسالة بنك", "علم التطبيق رسائل بنك جديدة كخصم أو إضافة", "🏦", PURPLE, v -> { dialog.dismiss(); bankMessageTrainerDialog(); });
         addMenuTile(box, "أرشيف الشهور", "ارجع لأي شهر قديم وشوف ملخصه", "🗓️", PRIMARY_DARK, v -> { dialog.dismiss(); showMonthArchive(); });
         dialog.show();
@@ -238,6 +255,7 @@ public class MainActivity extends Activity {
         addMenuTile(box, "الاشتراكات الشهرية", "خصومات متكررة وتنبيهات قبل الخصم", "🔁", BLUE, v -> { dialog.dismiss(); showSubscriptions(); });
         addMenuTile(box, "مراجعة الأونلاين والوارد", "راجع العمليات اللي محتاجة قرار", "🧾", ORANGE, v -> { dialog.dismiss(); showPending(); });
         addMenuTile(box, "الميزانية والمصروف", "تعديل الميزانية أو تصحيح المصروف الحالي", "⚙️", PRIMARY, v -> { dialog.dismiss(); budgetAndSpentDialog(); });
+        addMenuTile(box, "حدود الفئات", "حدد سقف للأكل والمواصلات والفواتير", "🎯", ORANGE, v -> { dialog.dismiss(); showCategoryBudgets(); });
         dialog.show();
     }
 
@@ -759,11 +777,12 @@ public class MainActivity extends Activity {
 
             DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
             if (dm == null) throw new Exception("DownloadManager unavailable");
-            dm.enqueue(req);
+            updateDownloadId = dm.enqueue(req);
+            updateDownloadFileName = fileName;
 
             new AlertDialog.Builder(this)
                     .setTitle("بدأ تنزيل التحديث")
-                    .setMessage("التحديث هينزل مباشرة في التنزيلات باسم:\n" + fileName + "\n\nبعد ما يخلص التحميل افتح إشعار التنزيل واضغط على الملف للتثبيت.")
+                    .setMessage("التحديث هينزل مباشرة في التنزيلات باسم:\n" + fileName + "\n\nبعد ما يخلص التحميل هيفتح التطبيق شاشة التثبيت تلقائيًا. على أندرويد لازم المستخدم يضغط تثبيت بنفسه للموافقة.")
                     .setPositiveButton("تمام", null)
                     .show();
         } catch (Exception e) {
@@ -772,6 +791,80 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
                 toast("فشل بدء التحميل المباشر");
             }
+        }
+    }
+
+    private void registerUpdateDownloadReceiver() {
+        if (updateDownloadReceiver != null) return;
+        updateDownloadReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent == null || !DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+                long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+                if (id == -1L || id != updateDownloadId) return;
+                openDownloadedApkInstaller(id);
+            }
+        };
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(updateDownloadReceiver, filter);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void openDownloadedApkInstaller(long downloadId) {
+        Cursor cursor = null;
+        try {
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (dm == null) throw new Exception("DownloadManager unavailable");
+
+            DownloadManager.Query query = new DownloadManager.Query().setFilterById(downloadId);
+            cursor = dm.query(query);
+            if (cursor != null && cursor.moveToFirst()) {
+                int statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                if (statusIndex >= 0 && cursor.getInt(statusIndex) != DownloadManager.STATUS_SUCCESSFUL) {
+                    toast("تحميل التحديث لم يكتمل");
+                    return;
+                }
+            }
+
+            Uri apkUri = dm.getUriForDownloadedFile(downloadId);
+            if (apkUri == null) {
+                toast("تم التحميل لكن لم أستطع فتح ملف التحديث");
+                return;
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+                new AlertDialog.Builder(this)
+                        .setTitle("السماح بتثبيت التحديث")
+                        .setMessage("التحديث اتحمل، لكن أندرويد محتاج تسمح لمصروفاتي بتثبيت التطبيقات من هذا المصدر. فعّل السماح، وبعدها افتح ملف التحديث من التنزيلات أو افحص التحديث مرة تانية.")
+                        .setPositiveButton("فتح الإعدادات", (d, w) -> {
+                            try {
+                                Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()));
+                                startActivity(settingsIntent);
+                            } catch (Exception e) {
+                                startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS));
+                            }
+                        })
+                        .setNegativeButton("لاحقًا", null)
+                        .show();
+                return;
+            }
+
+            Intent install = new Intent(Intent.ACTION_VIEW);
+            install.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(install);
+        } catch (Exception e) {
+            new AlertDialog.Builder(this)
+                    .setTitle("تم تنزيل التحديث")
+                    .setMessage("التحديث اتحمل باسم " + updateDownloadFileName + " في التنزيلات. افتح الملف واضغط تثبيت.")
+                    .setPositiveButton("تمام", null)
+                    .show();
+        } finally {
+            if (cursor != null) try { cursor.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -956,7 +1049,7 @@ public class MainActivity extends Activity {
         if ("PENDING_ONLINE".equals(status)) return "أونلاين للمراجعة";
         if ("PENDING_INCOMING".equals(status)) return "وارد للمراجعة";
         if ("SAVED_ONLY".equals(status)) return "حفظ فقط";
-        if ("PENDING_REVIEW".equals(status)) return "تحتاج مراجعة";
+        if ("PENDING_REVIEW".equals(status)) return "معلقة للمراجعة";
         return status;
     }
 
@@ -1047,6 +1140,10 @@ public class MainActivity extends Activity {
         addWeighted(ar4, actionCard("🔁", "اشتراك شهري", "Google / Netflix وغيره", BLUE, v -> addSubscriptionDialog()), 1, 4);
         addWeighted(ar4, actionCard("🔐", "قفل التطبيق", "PIN أو قفل الجهاز", PRIMARY_DARK, v -> showSecurityAndReminderSettings()), 1, 4);
         actions.addView(ar4, matchWrap());
+        LinearLayout ar5 = row();
+        addWeighted(ar5, actionCard("⏳", "عملية معلقة", "لما تكون مش متأكد", ORANGE, v -> pendingManualDialog()), 1, 4);
+        addWeighted(ar5, actionCard("🎯", "حدود الفئات", "سقف لكل فئة", PURPLE, v -> showCategoryBudgets()), 1, 4);
+        actions.addView(ar5, matchWrap());
         root.addView(actions);
 
         LinearLayout stats1 = row();
@@ -1078,6 +1175,8 @@ public class MainActivity extends Activity {
             root.addView(pendingCard);
         }
 
+        addCategoryBudgetAlertsToHome();
+
         LinearLayout chart = card();
         chart.addView(text("توزيع مصاريف الشهر", 18, true, DARK), matchWrap());
         chart.addView(text(count == 0 ? "لسه مفيش مصاريف مؤكدة الشهر ده" : count + " عملية مؤكدة خلال الشهر", 12, false, MUTED), matchWrap());
@@ -1089,6 +1188,41 @@ public class MainActivity extends Activity {
 
 
         root.addView(text("شراء PoS والحوالة الصادرة يتخصموا تلقائيًا. شراء الإنترنت والوارد يدخلوا مراجعة فقط.", 12, false, MUTED));
+    }
+
+    private void addCategoryBudgetAlertsToHome() {
+        List<ExpenseDbHelper.CategoryBudgetAlert> alerts = db.getCategoryBudgetAlerts(0.80);
+        if (alerts.isEmpty()) return;
+        LinearLayout box = card(pale(ORANGE));
+        box.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
+        box.addView(text("تنبيهات حدود الفئات", 18, true, ORANGE), matchWrap());
+        int shown = 0;
+        for (ExpenseDbHelper.CategoryBudgetAlert a : alerts) {
+            int col = a.percent >= 1.0 ? RED : ORANGE;
+            String line = a.category + " — " + money(a.spent) + " من " + money(a.limit) + " (" + Math.round(a.percent * 100) + "%)";
+            box.addView(text(line, 13, true, col), matchWrap());
+            shown++;
+            if (shown >= 4) break;
+        }
+        Button edit = softBtn("تعديل حدود الفئات", PURPLE);
+        edit.setOnClickListener(v -> showCategoryBudgets());
+        box.addView(edit);
+        root.addView(box);
+    }
+
+    private void maybeShowCategoryBudgetAlert(String category) {
+        if (category == null || category.trim().isEmpty()) return;
+        ExpenseDbHelper.CategoryBudgetAlert a = db.getCategoryBudgetAlert(category.trim(), 0.80);
+        if (a == null) return;
+        String msg = a.percent >= 1.0
+                ? "⚠️ فئة " + a.category + " عدت الحد: " + money(a.spent) + " من " + money(a.limit)
+                : "⚠️ فئة " + a.category + " قربت تخلص: " + Math.round(a.percent * 100) + "%";
+        new AlertDialog.Builder(this)
+                .setTitle("تنبيه حد الفئة")
+                .setMessage(msg)
+                .setPositiveButton("تعديل الحد", (d, w) -> showCategoryBudgets())
+                .setNegativeButton("تمام", null)
+                .show();
     }
 
     private void languageDialog() {
@@ -1217,10 +1351,60 @@ public class MainActivity extends Activity {
         if (chosenCategory != null && chosenCategory.trim().length() > 0) tx.category = chosenCategory;
         if ("BUDGET_INCREASE".equals(tx.type)) db.addToBudget(tx.amount);
         else if ("BUDGET_DECREASE".equals(tx.type)) db.addToBudget(-tx.amount);
-        db.insertParsed(tx);
+        long id = db.insertParsed(tx);
         autoCloudBackup();
+        if (id > 0 && tx.affectsBudget == 1 && "CONFIRMED".equals(tx.status)) maybeShowCategoryBudgetAlert(tx.category);
         toast("تم التسجيل");
         showHome();
+    }
+
+    private void pendingManualDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(6));
+
+        final EditText input = new EditText(this);
+        input.setMinLines(2);
+        input.setGravity(Gravity.RIGHT);
+        input.setTextDirection(View.TEXT_DIRECTION_RTL);
+        input.setHint("مثال: 80 " + db.currencySymbol() + " عملية محتاجة أتأكد منها");
+        box.addView(input, matchWrap());
+
+        final String[] selectedCategory = new String[]{"عام"};
+        Button category = softBtn("الفئة: " + selectedCategory[0], PURPLE);
+        category.setOnClickListener(v -> categoryPickerDialog(selectedCategory[0], cat -> {
+            selectedCategory[0] = cat;
+            category.setText("الفئة: " + cat);
+        }));
+        box.addView(category);
+
+        new AlertDialog.Builder(this)
+                .setTitle("حفظ عملية معلقة")
+                .setView(box)
+                .setPositiveButton("حفظ كمعلقة", (d, w) -> handlePendingManualInput(input.getText().toString(), selectedCategory[0]))
+                .setNegativeButton("إلغاء", null).show();
+    }
+
+    private void handlePendingManualInput(String text, String chosenCategory) {
+        MessageParser.ParsedTransaction tx = MessageParser.parseManualText(text, db.getBudget());
+        if (tx == null) { toast("مش قادر أفهم المبلغ"); return; }
+        tx.currency = db.getCurrency();
+        tx.status = "PENDING_REVIEW";
+        tx.type = "MANUAL_PENDING_REVIEW";
+        tx.affectsBudget = 0;
+        tx.title = (tx.title == null || tx.title.trim().isEmpty()) ? "عملية معلقة" : "عملية معلقة - " + tx.title.trim();
+        tx.category = chosenCategory == null || chosenCategory.trim().isEmpty() ? "عام" : chosenCategory.trim();
+        tx.extra = appendTextExtra(tx.extra, "reviewReason=عملية أضفتها كمعلقة");
+        long id = db.insertParsed(tx);
+        autoCloudBackup();
+        toast(id > 0 ? "اتحفظت في العمليات المعلقة" : "العملية موجودة قبل كده");
+        showPending();
+    }
+
+    private String appendTextExtra(String base, String add) {
+        if (base == null || base.trim().isEmpty()) return add;
+        if (base.contains(add)) return base;
+        return base + ";" + add;
     }
 
 
@@ -1516,11 +1700,11 @@ public class MainActivity extends Activity {
     }
 
     private void showPending() {
-        setup("مراجعة الرسائل الذكية"); addHomeButton();
+        setup("العمليات المعلقة والمراجعة"); addHomeButton();
         LinearLayout intro = card(pale(ORANGE));
         intro.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
-        intro.addView(text("رسائل تحتاج مراجعة قبل ما تتحسب", 18, true, ORANGE), matchWrap());
-        intro.addView(text("أي رسالة بنك جديدة أو غير مؤكدة هتظهر هنا. اعتمدها مرة، والتطبيق هيتعلم شكلها لو اتكررت.", 12, false, DARK), matchWrap());
+        intro.addView(text("عمليات معلقة ورسائل تحتاج قرار", 18, true, ORANGE), matchWrap());
+        intro.addView(text("أي عملية مش متأكد منها هتفضل هنا لحد ما تعتمدها أو تحفظها أو تحذفها.", 12, false, DARK), matchWrap());
         root.addView(intro);
 
         List<ExpenseDbHelper.Tx> list = db.getPending();
@@ -1552,8 +1736,12 @@ public class MainActivity extends Activity {
             c.addView(smart);
 
             if ("PENDING_ONLINE".equals(tx.status)) {
-                Button approve = softBtn("خصم من الميزانية", RED); approve.setOnClickListener(v -> { db.approveOnline(tx.id); autoCloudBackup(); toast("تم الخصم"); showPending(); }); c.addView(approve);
+                Button approve = softBtn("خصم من الميزانية", RED); approve.setOnClickListener(v -> { db.approveOnline(tx.id); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); toast("تم الخصم"); showPending(); }); c.addView(approve);
                 Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
+            } else if ("PENDING_REVIEW".equals(tx.status)) {
+                Button approve = softBtn("اعتماد كخصم", RED); approve.setOnClickListener(v -> { db.updateTransactionDecision(tx.id, tx.amount, tx.title, tx.category, "PENDING_APPROVED_EXPENSE", "CONFIRMED", 1); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); toast("تم اعتماد العملية"); showPending(); }); c.addView(approve);
+                Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
+                Button del = softBtn("حذف العملية", RED); del.setOnClickListener(v -> { db.deleteTransaction(tx.id); autoCloudBackup(); toast("تم الحذف"); showPending(); }); c.addView(del);
             } else if ("PENDING_INCOMING".equals(tx.status)) {
                 Button income = softBtn("تسجيل كدخل إضافي", PRIMARY); income.setOnClickListener(v -> { db.markExtraIncome(tx.id); autoCloudBackup(); toast("اتسجل دخل إضافي"); showPending(); }); c.addView(income);
                 Button debt = softBtn("تسجيل كسداد دين", PURPLE); debt.setOnClickListener(v -> chooseDebtForPayment(tx)); c.addView(debt);
@@ -1634,6 +1822,7 @@ public class MainActivity extends Activity {
 
         if ("EXPENSE".equals(decision)) {
             db.updateTransactionDecision(tx.id, a, title, category, "SMART_REVIEW_EXPENSE", "CONFIRMED", 1);
+            maybeShowCategoryBudgetAlert(category);
             toast("تم تسجيلها كخصم");
         } else if ("INCOME".equals(decision)) {
             db.updateTransactionDecision(tx.id, a, title, category, "EXTRA_INCOME", "CONFIRMED", 0);
@@ -1659,7 +1848,7 @@ public class MainActivity extends Activity {
                 .setView(input)
                 .setPositiveButton("خصم", (d, w) -> {
                     double a = parseAmount(input.getText().toString());
-                    if (a > 0) { db.updateTransactionAmount(tx.id, a); db.approveOnline(tx.id); showPending(); }
+                    if (a > 0) { db.updateTransactionAmount(tx.id, a); db.approveOnline(tx.id); maybeShowCategoryBudgetAlert(tx.category); showPending(); }
                 }).setNegativeButton("إلغاء", null).show();
     }
 
@@ -2338,18 +2527,22 @@ public class MainActivity extends Activity {
         LinearLayout hero = card();
         hero.setBackground(gradient(PURPLE, Color.rgb(92, 74, 168), 24));
         hero.addView(text(L("قسم ميزانيتك حسب الفئات", "Split your budget by category"), 18, true, Color.WHITE), matchWrap());
-        hero.addView(text(L("وأنت بتضيف مصروف تقدر تختار الفئة، والتطبيق ينبهك لو فئة عدت حدها.", "Choose the category when adding expenses and track each limit."), 12, false, Color.rgb(235,231,255)), matchWrap());
+        hero.addView(text(L("حدد حد لكل فئة، والتنبيه يظهر عند 80% وقبل ما الفئة تعدي الحد.", "Set a limit for each category and get alerts at 80%."), 12, false, Color.rgb(235,231,255)), matchWrap());
         root.addView(hero);
         Button add = btn(L("إضافة / تعديل فئة", "Add / edit category")); add.setOnClickListener(v -> categoryBudgetDialog(null)); root.addView(add);
         for (ExpenseDbHelper.BudgetCategory bc : db.getBudgetCategories()) {
             LinearLayout c = card();
             double spent = db.getCategorySpent(bc.name);
-            int col = bc.monthlyLimit > 0 && spent > bc.monthlyLimit ? RED : PRIMARY;
+            int col = bc.monthlyLimit > 0 && spent >= bc.monthlyLimit ? RED : (bc.monthlyLimit > 0 && spent >= bc.monthlyLimit * 0.8 ? ORANGE : PRIMARY);
             c.addView(text(bc.name, 20, true, DARK), matchWrap());
             c.addView(text(L("المصروف: ", "Spent: ") + money(spent) + " / " + (bc.monthlyLimit <= 0 ? L("بدون حد", "No limit") : money(bc.monthlyLimit)), 13, true, col), matchWrap());
             BudgetProgressView bp = new BudgetProgressView(this, bc.monthlyLimit <= 0 ? 0 : spent / bc.monthlyLimit, pale(col), col);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10)); lp.setMargins(0, dp(8), 0, dp(8)); c.addView(bp, lp);
-            if (bc.monthlyLimit > 0) c.addView(text(L("المتبقي: ", "Remaining: ") + money(bc.monthlyLimit - spent), 13, false, MUTED), matchWrap());
+            if (bc.monthlyLimit > 0) {
+                double pct = (spent / Math.max(1, bc.monthlyLimit)) * 100.0;
+                c.addView(text(L("المتبقي: ", "Remaining: ") + money(bc.monthlyLimit - spent), 13, false, MUTED), matchWrap());
+                if (pct >= 80) c.addView(text(pct >= 100 ? "⚠️ الفئة عدت الحد المحدد" : "⚠️ الفئة قربت تخلص: " + Math.round(pct) + "%", 13, true, col), matchWrap());
+            }
             Button edit = softBtn(L("تعديل الفئة", "Edit category"), PURPLE); edit.setOnClickListener(v -> categoryBudgetDialog(bc)); c.addView(edit);
             root.addView(c);
         }

@@ -15,8 +15,8 @@ android {
         applicationId 'com.mohamed.expenseguard'
         minSdk 26
         targetSdk 35
-        versionCode 28
-        versionName '2.17'
+        versionCode 30
+        versionName '2.19'
         buildConfigField "String", "GITHUB_REPOSITORY", "\"${githubRepository}\""
         buildConfigField "String", "GITHUB_BRANCH", "\"${githubBranch}\""
     }

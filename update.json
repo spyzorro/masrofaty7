@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 28,
-  "latestVersionName": "2.17",
+  "latestVersionCode": 30,
+  "latestVersionName": "2.19",
   "apkUrl": "https://raw.githubusercontent.com/spyzorro/masrofaty7/main/downloads/Masrofaty-latest.apk",
-  "notes": "تحديث جديد متاح للتحميل المباشر",
+  "notes": "إضافة حدود للفئات مع تنبيهات عند قرب انتهاء الحد، وإضافة العمليات المعلقة لاعتمادها أو حذفها لاحقًا",
   "dataVersion": "2026-06-29",
   "message": "يوجد تحديث جديد متاح الآن"
 }

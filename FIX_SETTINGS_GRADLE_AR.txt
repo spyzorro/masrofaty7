@@ -1,0 +1,6 @@
+سبب خطأ <resources> في settings.gradle:
+ملف settings.gradle اتبدل بالغلط بمحتوى XML خاص بملف strings.xml.
+
+الحل:
+settings.gradle لازم يحتوي Gradle code وليس <resources>.
+هذه النسخة تحتوي settings.gradle صحيح، والـ GitHub Actions يعيد كتابته تلقائياً قبل البناء لتجنب تكرار الخطأ.

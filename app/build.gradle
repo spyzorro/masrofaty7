@@ -1,0 +1,46 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.mohamed.expenseguard'
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId 'com.mohamed.expenseguard'
+        minSdk 26
+        targetSdk 35
+        versionCode 15
+        versionName '2.4'
+    }
+
+    signingConfigs {
+        masrofatyRelease {
+            storeFile file('masrofaty-release.jks')
+            storePassword 'masrofaty123'
+            keyAlias 'masrofaty'
+            keyPassword 'masrofaty123'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.masrofatyRelease
+        }
+        release {
+            signingConfig signingConfigs.masrofatyRelease
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+}
+
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.firebase:firebase-firestore'
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
+    implementation 'androidx.core:core:1.15.0'
+}

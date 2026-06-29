@@ -639,8 +639,84 @@ public class MainActivity extends Activity {
         String u = url.trim();
         if (u.length() == 0) return false;
         if (!u.startsWith("http://") && !u.startsWith("https://")) return false;
-        if (u.contains("USERNAME") || u.contains("REPO") || u.contains("رابط") || u.contains("ضع")) return false;
+        if (u.contains("USERNAME") || u.contains("OWNER/REPO") || u.contains("/OWNER/") || u.contains("رابط") || u.contains("ضع")) return false;
         return true;
+    }
+
+    private boolean isValidApkUrl(String url) {
+        if (!isValidUpdateUrl(url)) return false;
+        String u = url.trim().toLowerCase(Locale.US);
+        if (!u.contains(".apk")) return false;
+        if (u.contains("owner/repo") || u.contains("username") || u.contains("example")) return false;
+        return true;
+    }
+
+    private List<String> apkUrlCandidates(String latestName, String jsonApkUrl) {
+        ArrayList<String> urls = new ArrayList<>();
+        if (isValidApkUrl(jsonApkUrl)) addUniqueUrl(urls, jsonApkUrl);
+        try {
+            String repo = BuildConfig.GITHUB_REPOSITORY == null ? "" : BuildConfig.GITHUB_REPOSITORY.trim();
+            String name = latestName == null ? "" : latestName.trim();
+            if (repo.length() > 0 && repo.contains("/") && name.length() > 0) {
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/Masrofaty-v" + name + ".apk");
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/Masrofaty-v" + name + ".apk");
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/app-release.apk");
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/app-release.apk");
+            }
+        } catch (Exception ignored) {}
+        return urls;
+    }
+
+    private boolean urlExists(String urlText) {
+        HttpURLConnection con = null;
+        try {
+            con = (HttpURLConnection) new URL(urlText).openConnection();
+            con.setInstanceFollowRedirects(true);
+            con.setConnectTimeout(9000);
+            con.setReadTimeout(9000);
+            con.setRequestMethod("GET");
+            con.setRequestProperty("Range", "bytes=0-0");
+            con.setRequestProperty("User-Agent", "Masrofaty-Android");
+            int code = con.getResponseCode();
+            return code >= 200 && code < 400;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            try { if (con != null) con.disconnect(); } catch (Exception ignored) {}
+        }
+    }
+
+    private String findWorkingApkUrl(List<String> urls) {
+        for (String u : urls) {
+            if (isValidApkUrl(u) && urlExists(u)) return u;
+        }
+        return "";
+    }
+
+    private void openUpdateDownload(String latestName, String jsonApkUrl) {
+        List<String> urls = apkUrlCandidates(latestName, jsonApkUrl);
+        if (urls.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("رابط التحميل غير جاهز")
+                    .setMessage("التطبيق لقى تحديث، لكن مفيش رابط APK صحيح. شغل GitHub Actions وتأكد إن Release فيه ملف APK.")
+                    .setPositiveButton("تمام", null).show();
+            return;
+        }
+        toast("جاري تجهيز رابط التحميل...");
+        new Thread(() -> {
+            String ok = findWorkingApkUrl(urls);
+            runOnUiThread(() -> {
+                if (ok.length() > 0) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ok))); }
+                    catch (Exception e) { toast("مش قادر أفتح رابط التحميل"); }
+                } else {
+                    new AlertDialog.Builder(this)
+                            .setTitle("ملف التحديث غير موجود")
+                            .setMessage("التحديث متسجل في update.json، لكن ملف APK مش موجود على GitHub Release أو الريبو Private.\n\nاعمل الآتي:\n1. ارفع ملف workflow الجديد.\n2. شغل GitHub Actions وانتظر علامة الصح.\n3. افتح Releases وتأكد إن فيه ملف Masrofaty-v" + latestName + ".apk.\n4. لو الناس هتحمل من خارج حسابك، خلي الريبو Public.")
+                            .setPositiveButton("تمام", null).show();
+                }
+            });
+        }).start();
     }
 
     private void showUpdateCenter() {
@@ -747,13 +823,14 @@ public class MainActivity extends Activity {
     }
 
     private void showUpdateResult(int latestCode, String latestName, String apkUrl, String notes, String dataVersion, String msg) {
-        boolean hasAppUpdate = latestCode > BuildConfig.VERSION_CODE && apkUrl != null && apkUrl.trim().length() > 0;
+        boolean hasAppUpdate = latestCode > BuildConfig.VERSION_CODE;
         StringBuilder m = new StringBuilder();
         if (hasAppUpdate) {
             m.append("إصدار جديد متاح");
             if (latestName != null && latestName.length() > 0) m.append(": ").append(latestName);
             if (notes != null && notes.length() > 0) m.append("\n\n").append(notes);
             if (msg != null && msg.length() > 0) m.append("\n\n").append(msg);
+            if (!isValidApkUrl(apkUrl)) m.append("\n\n").append("ملاحظة: رابط APK الموجود في update.json غير صالح، التطبيق هيجرب رابط GitHub Release تلقائيًا.");
         } else {
             m.append("أنت على آخر إصدار حاليًا");
         }
@@ -762,10 +839,7 @@ public class MainActivity extends Activity {
                 .setMessage(m.toString())
                 .setNegativeButton("إغلاق", null);
         if (hasAppUpdate) {
-            b.setPositiveButton("تحميل", (d, w) -> {
-                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl))); }
-                catch (Exception e) { toast("مش قادر أفتح رابط التحميل"); }
-            });
+            b.setPositiveButton("تحميل", (d, w) -> openUpdateDownload(latestName, apkUrl));
         }
         b.show();
     }

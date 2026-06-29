@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 19,
-  "latestVersionName": "2.8",
-  "apkUrl": "https://github.com/OWNER/REPO/releases/latest/download/Masrofaty-v2.8.apk",
-  "notes": "شاشة مراجعة ذكية للرسائل الجديدة ومنع تكرار أقوى بين SMS والإشعارات والرسائل المتشابهة",
+  "latestVersionCode": 0,
+  "latestVersionName": "",
+  "apkUrl": "",
+  "notes": "سيتم تحديث هذا الملف تلقائيًا بعد نجاح GitHub Actions",
   "dataVersion": "2026-06-29",
-  "message": "تحديث جديد متاح الآن"
+  "message": ""
 }

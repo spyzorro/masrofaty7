@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build APK Release and Update JSON
 
 on:
   workflow_dispatch:
@@ -7,6 +7,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,6 +17,50 @@ jobs:
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect project root
+        id: root
+        shell: bash
+        run: |
+          if [ -f "ExpenseGuardApp/settings.gradle" ]; then
+            echo "dir=ExpenseGuardApp" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Repair Gradle root files
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          cat > settings.gradle <<'SETTINGS_EOF'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "ExpenseGuardApp"
+include ':app'
+SETTINGS_EOF
+
+          cat > gradle.properties <<'GRADLE_PROPS_EOF'
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.enableJetifier=true
+GRADLE_PROPS_EOF
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -29,15 +76,118 @@ jobs:
         with:
           gradle-version: 8.10.2
 
-      - name: Build APK
+      - name: Read app version
+        id: version
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
         run: |
-          if [ -f "ExpenseGuardApp/settings.gradle" ]; then
-            cd ExpenseGuardApp
-          fi
-          gradle assembleDebug --no-daemon
+          VERSION_CODE=$(grep -E "versionCode" app/build.gradle | head -1 | awk '{print $2}')
+          VERSION_NAME=$(grep -E "versionName" app/build.gradle | head -1 | sed -E "s/.*versionName ['\"]([^'\"]+)['\"].*/\1/")
+          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "versionCode=$VERSION_CODE"
+          echo "versionName=$VERSION_NAME"
 
-      - name: Upload APK
+      - name: Build APK
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          set -e
+          gradle assembleRelease --no-daemon || gradle assembleDebug --no-daemon
+
+      - name: Prepare APK file
+        id: apk
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          set -e
+          mkdir -p release_out
+          APK=$(find app/build/outputs/apk -name "*.apk" | sort | grep -m1 -E "/release/|/debug/" || true)
+          if [ -z "$APK" ]; then
+            echo "No APK file was generated"
+            find app/build/outputs -type f || true
+            exit 1
+          fi
+          APK_NAME="Masrofaty-v${{ steps.version.outputs.name }}.apk"
+          cp "$APK" "release_out/$APK_NAME"
+          echo "name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "path=${{ steps.root.outputs.dir }}/release_out/$APK_NAME" >> "$GITHUB_OUTPUT"
+          ls -lah release_out
+
+      - name: Create or update GitHub Release and upload APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="v${{ steps.version.outputs.name }}"
+          APK_PATH="${{ steps.apk.outputs.path }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists"
+          else
+            gh release create "$TAG" --title "Masrofaty $TAG" --notes "إصدار جديد من تطبيق مصروفاتي" --target "${GITHUB_SHA}"
+          fi
+          gh release upload "$TAG" "$APK_PATH" --clobber
+          gh release view "$TAG" --json tagName,url,assets
+
+      - name: Generate update.json with real APK link
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          set -e
+          VERSION_CODE="${{ steps.version.outputs.code }}"
+          VERSION_NAME="${{ steps.version.outputs.name }}"
+          APK_NAME="${{ steps.apk.outputs.name }}"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION_NAME}/${APK_NAME}"
+          DATE_NOW=$(date +%F)
+          cat > update.json <<JSON_EOF
+{
+  "latestVersionCode": ${VERSION_CODE},
+  "latestVersionName": "${VERSION_NAME}",
+  "apkUrl": "${APK_URL}",
+  "notes": "تحديث جديد لتطبيق مصروفاتي",
+  "dataVersion": "${DATE_NOW}",
+  "message": "يوجد تحديث جديد متاح الآن"
+}
+JSON_EOF
+          cat update.json
+
+      - name: Upload update.json to the same Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="v${{ steps.version.outputs.name }}"
+          ROOT="${{ steps.root.outputs.dir }}"
+          gh release upload "$TAG" "$ROOT/update.json" --clobber
+
+      - name: Commit update.json to repo
+        shell: bash
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: |
+          set -e
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add update.json settings.gradle gradle.properties
+          git commit -m "Update release metadata v${{ steps.version.outputs.name }} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - name: Verify APK download URL
+        shell: bash
+        run: |
+          set -e
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${{ steps.version.outputs.name }}/${{ steps.apk.outputs.name }}"
+          echo "Testing: $URL"
+          CODE=$(curl -L -I -s -o /dev/null -w "%{http_code}" "$URL")
+          echo "HTTP code: $CODE"
+          if [ "$CODE" != "200" ] && [ "$CODE" != "302" ]; then
+            echo "APK is not reachable. If the repository is private, make it public or use GitHub Pages/Firebase Hosting."
+            exit 1
+          fi
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ExpenseGuard-debug-apk
-          path: "**/app/build/outputs/apk/debug/*.apk"
+          name: Masrofaty-release-apk
+          path: "${{ steps.root.outputs.dir }}/release_out/*.apk"

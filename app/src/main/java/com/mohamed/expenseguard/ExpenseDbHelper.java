@@ -39,6 +39,8 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     private static final String PUBLIC_BACKUP_DIR = Environment.DIRECTORY_DOCUMENTS + "/Masrofaty/";
     private static final String PUBLIC_BACKUP_DOWNLOAD_DIR = Environment.DIRECTORY_DOWNLOADS + "/Masrofaty/";
     private final Context appContext;
+    private boolean localBackupInProgress = false;
+
 
     public ExpenseDbHelper(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -157,11 +159,47 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         try { return Double.parseDouble(getSetting(key, String.valueOf(fallback))); } catch (Exception e) { return fallback; }
     }
 
-    public void setSetting(String key, String value) { setSetting(getWritableDatabase(), key, value); }
+    public void setSetting(String key, String value) {
+        setSetting(getWritableDatabase(), key, value);
+        if (!isBackupMetaKey(key)) autoLocalBackupAfterChange();
+    }
     private void setSetting(SQLiteDatabase db, String key, String value) {
         ContentValues cv = new ContentValues();
         cv.put("key", key); cv.put("value", value);
         db.insertWithOnConflict("settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    private boolean isBackupMetaKey(String key) {
+        if (key == null) return false;
+        return key.equals("last_local_backup") || key.equals("last_local_restore") || key.equals("last_cloud_restore");
+    }
+
+    public void autoLocalBackupAfterChange() {
+        if (localBackupInProgress) return;
+        localBackupInProgress = true;
+        try {
+            String json = exportBackupJson();
+            writeFile(privateBackupFile(), json);
+            try { writePublicBackupText(json); } catch (Exception ignored) {}
+            try { writeChosenBackupText(json); } catch (Exception ignored) {}
+            setSetting(getWritableDatabase(), "last_local_backup", String.valueOf(System.currentTimeMillis()));
+        } catch (Exception ignored) {
+        } finally {
+            localBackupInProgress = false;
+        }
+    }
+
+    private void writeChosenBackupText(String json) throws Exception {
+        String saved = getSetting("phone_backup_uri", "");
+        if (saved == null || saved.trim().isEmpty()) return;
+        OutputStream out = null;
+        try {
+            Uri uri = Uri.parse(saved.trim());
+            out = appContext.getContentResolver().openOutputStream(uri, "wt");
+            if (out != null) out.write((json == null ? "" : json).getBytes(StandardCharsets.UTF_8));
+        } finally {
+            try { if (out != null) out.close(); } catch (Exception ignored) {}
+        }
     }
 
     public long insertParsed(MessageParser.ParsedTransaction tx) {
@@ -189,7 +227,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("extra", tx.extra);
         cv.put("affectsBudget", tx.affectsBudget);
         cv.put("createdAt", System.currentTimeMillis());
-        return db.insertWithOnConflict("transactions", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+        long id = db.insertWithOnConflict("transactions", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+        if (id > 0) autoLocalBackupAfterChange();
+        return id;
     }
 
 
@@ -573,6 +613,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             ContentValues cv = new ContentValues();
             cv.put("category", category.trim());
             getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+            autoLocalBackupAfterChange();
         }
         return id;
     }
@@ -662,29 +703,34 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         ContentValues cv = new ContentValues();
         cv.put("status", "CONFIRMED"); cv.put("affectsBudget", 1); cv.put("type", "ONLINE_PURCHASE_APPROVED");
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void saveOnly(long id) {
         ContentValues cv = new ContentValues();
         cv.put("status", "SAVED_ONLY"); cv.put("affectsBudget", 0);
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void markExtraIncome(long id) {
         ContentValues cv = new ContentValues();
         cv.put("status", "CONFIRMED"); cv.put("affectsBudget", 0); cv.put("type", "EXTRA_INCOME");
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void markDebtPayment(long id) {
         ContentValues cv = new ContentValues();
         cv.put("status", "CONFIRMED"); cv.put("affectsBudget", 0); cv.put("type", "DEBT_PAYMENT");
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void updateTransactionAmount(long id, double amount) {
         ContentValues cv = new ContentValues(); cv.put("amount", amount);
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void updateTransaction(long id, double amount, String title, String category, int affectsBudget) {
@@ -695,6 +741,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("category", category == null || category.trim().isEmpty() ? "عام" : category.trim());
         cv.put("affectsBudget", affectsBudget);
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void updateTransactionDecision(long id, double amount, String title, String category, String type, String status, int affectsBudget) {
@@ -709,10 +756,12 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("status", status == null || status.trim().isEmpty() ? "CONFIRMED" : status.trim());
         cv.put("affectsBudget", affectsBudget);
         getWritableDatabase().update("transactions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public void deleteTransaction(long id) {
-        getWritableDatabase().delete("transactions", "id=?", new String[]{String.valueOf(id)});
+        int changed = getWritableDatabase().delete("transactions", "id=?", new String[]{String.valueOf(id)});
+        if (changed > 0) autoLocalBackupAfterChange();
     }
 
     public void adjustMonthlySpentTo(double targetSpent) {
@@ -737,7 +786,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("direction", "OWE_TO_OTHERS".equals(direction) ? "OWE_TO_OTHERS" : "OWED_TO_ME");
         cv.put("dueDateMillis", Math.max(0, dueDateMillis));
         cv.put("createdAt", System.currentTimeMillis()); cv.put("updatedAt", System.currentTimeMillis());
-        return getWritableDatabase().insert("debts", null, cv);
+        long id = getWritableDatabase().insert("debts", null, cv);
+        if (id > 0) autoLocalBackupAfterChange();
+        return id;
     }
 
     public void updateDebtDueDate(long debtId, long dueDateMillis) {
@@ -745,6 +796,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("dueDateMillis", Math.max(0, dueDateMillis));
         cv.put("updatedAt", System.currentTimeMillis());
         getWritableDatabase().update("debts", cv, "id=?", new String[]{String.valueOf(debtId)});
+        autoLocalBackupAfterChange();
     }
 
     public List<Debt> getDebts() {
@@ -787,6 +839,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
                 db.update("debts", cv, "id=?", new String[]{String.valueOf(debtId)});
             }
         }
+        autoLocalBackupAfterChange();
     }
 
     public long addSubscription(String name, double amount, String currency, String merchant, String category, long nextDateMillis, String notes) {
@@ -802,7 +855,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("lastChargedMillis", 0);
         cv.put("createdAt", System.currentTimeMillis());
         cv.put("updatedAt", System.currentTimeMillis());
-        return getWritableDatabase().insert("subscriptions", null, cv);
+        long id = getWritableDatabase().insert("subscriptions", null, cv);
+        if (id > 0) autoLocalBackupAfterChange();
+        return id;
     }
 
     public List<Subscription> getSubscriptions() {
@@ -826,6 +881,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         ContentValues cv = new ContentValues();
         cv.put("active", active ? 1 : 0); cv.put("updatedAt", System.currentTimeMillis());
         getWritableDatabase().update("subscriptions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
     }
 
     public long chargeSubscription(long id) {
@@ -840,6 +896,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("nextDateMillis", cal.getTimeInMillis());
         cv.put("updatedAt", System.currentTimeMillis());
         getWritableDatabase().update("subscriptions", cv, "id=?", new String[]{String.valueOf(id)});
+        autoLocalBackupAfterChange();
         return tx;
     }
 
@@ -955,10 +1012,15 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         ContentValues cv = new ContentValues();
         cv.put("name", name.trim()); cv.put("monthlyLimit", Math.max(0, monthlyLimit)); cv.put("currency", getCurrency()); cv.put("active", 1);
         cv.put("createdAt", System.currentTimeMillis()); cv.put("updatedAt", System.currentTimeMillis());
-        return db.insertWithOnConflict("budget_categories", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        long id = db.insertWithOnConflict("budget_categories", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        if (id != -1) autoLocalBackupAfterChange();
+        return id;
     }
 
-    public void deleteBudgetCategory(long id) { getWritableDatabase().delete("budget_categories", "id=?", new String[]{String.valueOf(id)}); }
+    public void deleteBudgetCategory(long id) {
+        int changed = getWritableDatabase().delete("budget_categories", "id=?", new String[]{String.valueOf(id)});
+        if (changed > 0) autoLocalBackupAfterChange();
+    }
 
     public List<BudgetCategory> getBudgetCategories() {
         List<BudgetCategory> list = new ArrayList<>();
@@ -1029,6 +1091,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         cv.put("monthKey", monthKey); cv.put("budget", getBudget()); cv.put("spent", spent); cv.put("extraIncome", income); cv.put("cashBalance", getCashBalance());
         cv.put("closedAt", System.currentTimeMillis()); cv.put("summary", summary.toString());
         getWritableDatabase().insertWithOnConflict("month_archives", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        autoLocalBackupAfterChange();
     }
     private long[] monthRange(String monthKey) {
         Calendar cal = Calendar.getInstance();
@@ -1130,6 +1193,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         } finally {
             db.endTransaction();
         }
+        autoLocalBackupAfterChange();
     }
 
     private void jsonToTable(SQLiteDatabase db, String table, JSONArray arr) throws Exception {
@@ -1153,13 +1217,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
 
 
     public void saveLocalBackup() {
-        try {
-            String json = exportBackupJson();
-            writeFile(privateBackupFile(), json);
-            // نسخ عامة خارج مساحة التطبيق حتى تفضل بعد حذف التطبيق قدر الإمكان
-            try { writePublicBackupText(json); } catch (Exception ignored) {}
-            setSetting("last_local_backup", String.valueOf(System.currentTimeMillis()));
-        } catch (Exception ignored) {}
+        autoLocalBackupAfterChange();
     }
 
     public boolean restoreLocalBackupIfEmpty() {

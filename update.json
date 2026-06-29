@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 22,
-  "latestVersionName": "2.11",
+  "latestVersionCode": 23,
+  "latestVersionName": "2.12",
   "apkUrl": "",
-  "notes": "إصلاح ظهور التحديث بعد تعديلات v2.10 وتحسين فحص الإصدار",
+  "notes": "حفظ فوري لملف الداتا بعد أي تعديل، مع الحفاظ على تبسيط إضافة الكتابة",
   "dataVersion": "2026-06-29",
   "message": "يوجد تحديث جديد متاح الآن"
 }

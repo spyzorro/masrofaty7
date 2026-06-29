@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 23,
-  "latestVersionName": "2.12",
+  "latestVersionCode": 24,
+  "latestVersionName": "2.13",
   "apkUrl": "",
-  "notes": "حفظ فوري لملف الداتا بعد أي تعديل، مع الحفاظ على تبسيط إضافة الكتابة",
+  "notes": "تحميل التحديث مباشرة من داخل التطبيق بدون فتح صفحة GitHub",
   "dataVersion": "2026-06-29",
   "message": "يوجد تحديث جديد متاح الآن"
 }

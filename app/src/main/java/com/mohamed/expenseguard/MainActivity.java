@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.AlarmManager;
+import android.app.DownloadManager;
 import android.app.PendingIntent;
 import android.app.KeyguardManager;
 import android.content.Intent;
@@ -17,6 +18,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.Settings;
 import android.provider.DocumentsContract;
 import android.speech.RecognizerIntent;
@@ -710,13 +712,12 @@ public class MainActivity extends Activity {
                     .setPositiveButton("تمام", null).show();
             return;
         }
-        toast("جاري تجهيز رابط التحميل...");
+        toast("جاري تجهيز التحميل المباشر...");
         new Thread(() -> {
             String ok = findWorkingApkUrl(urls);
             runOnUiThread(() -> {
                 if (ok.length() > 0) {
-                    try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(ok))); }
-                    catch (Exception e) { toast("مش قادر أفتح رابط التحميل"); }
+                    startApkDownload(ok, latestName);
                 } else {
                     new AlertDialog.Builder(this)
                             .setTitle("ملف التحديث غير موجود")
@@ -725,6 +726,43 @@ public class MainActivity extends Activity {
                 }
             });
         }).start();
+    }
+
+    private String updateApkFileName(String latestName) {
+        String name = latestName == null ? "" : latestName.trim();
+        if (name.length() == 0) name = "update";
+        name = name.replaceAll("[^0-9A-Za-z._-]", "_");
+        return "Masrofaty-v" + name + ".apk";
+    }
+
+    private void startApkDownload(String apkUrl, String latestName) {
+        try {
+            String fileName = updateApkFileName(latestName);
+            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(apkUrl));
+            req.setTitle("تحديث مصروفاتي " + (latestName == null ? "" : latestName));
+            req.setDescription("جاري تنزيل ملف التحديث مباشرة");
+            req.setMimeType("application/vnd.android.package-archive");
+            req.setAllowedOverMetered(true);
+            req.setAllowedOverRoaming(true);
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+
+            DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+            if (dm == null) throw new Exception("DownloadManager unavailable");
+            dm.enqueue(req);
+
+            new AlertDialog.Builder(this)
+                    .setTitle("بدأ تنزيل التحديث")
+                    .setMessage("التحديث هينزل مباشرة في التنزيلات باسم:\n" + fileName + "\n\nبعد ما يخلص التحميل افتح إشعار التنزيل واضغط على الملف للتثبيت.")
+                    .setPositiveButton("تمام", null)
+                    .show();
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+            } catch (Exception ignored) {
+                toast("فشل بدء التحميل المباشر");
+            }
+        }
     }
 
     private void showUpdateCenter() {
@@ -847,7 +885,7 @@ public class MainActivity extends Activity {
                 .setMessage(m.toString())
                 .setNegativeButton("إغلاق", null);
         if (hasAppUpdate) {
-            b.setPositiveButton("تحميل", (d, w) -> openUpdateDownload(latestName, apkUrl));
+            b.setPositiveButton("تنزيل مباشر", (d, w) -> openUpdateDownload(latestName, apkUrl));
         }
         b.show();
     }

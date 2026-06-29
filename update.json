@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 0,
-  "latestVersionName": "2.8",
+  "latestVersionCode": 21,
+  "latestVersionName": "2.10",
   "apkUrl": "",
-  "notes": "سيتم تحديث هذا الملف تلقائيًا بعد نجاح GitHub Actions",
+  "notes": "إضافة علامة العين لإخفاء وإظهار الأرقام، وتنضيف شاشة الإضافة كتابة مع اختيار الفئة فقط",
   "dataVersion": "2026-06-29",
-  "message": ""
+  "message": "تحديث جديد في مصروفاتي v2.10"
 }

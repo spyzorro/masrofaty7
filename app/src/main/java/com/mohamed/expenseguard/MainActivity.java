@@ -204,7 +204,7 @@ public class MainActivity extends Activity {
         LinearLayout box = styledMenuBox("إضافة سريعة", "اختار نوع الإضافة: مصروف، دخل، فويس، اشتراك، أو رسالة بنك", PRIMARY);
         ScrollView sc = wrapMenu(box);
         final AlertDialog dialog = new AlertDialog.Builder(this).setView(sc).create();
-        addMenuTile(box, "مصروف / دخل كتابة", "إضافة عملية جديدة واختيار الفئة والعملة", "➕", BLUE, v -> { dialog.dismiss(); manualDialog(); });
+        addMenuTile(box, "إضافة كتابة", "مثال واحد + اختيار الفئة", "➕", BLUE, v -> { dialog.dismiss(); manualDialog(); });
         addMenuTile(box, "إضافة بالفويس", "سجل مصروفك بالصوت بسرعة", "🎙️", PRIMARY, v -> { dialog.dismiss(); startVoice(); });
         addMenuTile(box, "دخل إضافي", "أضف أي مبلغ دخل الشهر ده غير الميزانية", "💵", PRIMARY_DARK, v -> { dialog.dismiss(); extraIncomeDialog(); });
         addMenuTile(box, "اشتراك شهري", "Google / Netflix / أي خصم شهري متكرر", "🔁", PURPLE, v -> { dialog.dismiss(); addSubscriptionDialog(); });
@@ -303,15 +303,23 @@ public class MainActivity extends Activity {
     }
 
     private boolean privacyMode() { return "1".equals(db.getSetting("privacy_mode", "0")); }
-    private String money(double v) { return privacyMode() ? "••••" : db.money(v); }
+
+    private void togglePrivacyMode() {
+        boolean hide = !privacyMode();
+        db.setSetting("privacy_mode", hide ? "1" : "0");
+        toast(hide ? "تم إخفاء الأرقام" : "تم إظهار الأرقام");
+        showHome();
+    }
+
+    private String money(double v) { return privacyMode() ? "****" : db.money(v); }
     private String moneyCurrency(double v, String currency) {
-        if (privacyMode()) return "••••";
+        if (privacyMode()) return "****";
         String sym = "EGP".equalsIgnoreCase(currency) ? "ج.م" : "ر.س";
         return String.format(Locale.US, "%.2f %s", v, sym);
     }
 
     private String debtSummary(String direction) {
-        if (privacyMode()) return "••••";
+        if (privacyMode()) return "****";
         double sar = db.getDebtTotal(direction, "SAR");
         double egp = db.getDebtTotal(direction, "EGP");
         if (sar > 0 && egp > 0) return moneyCurrency(sar, "SAR") + " | " + moneyCurrency(egp, "EGP");
@@ -947,7 +955,19 @@ public class MainActivity extends Activity {
         hero.setPadding(dp(18), dp(18), dp(18), dp(18));
         hero.setClickable(true);
         hero.setOnClickListener(v -> showLog());
-        hero.addView(text("المتبقي من ميزانية الشهر", 14, false, Color.rgb(222, 255, 246)), matchWrap());
+        LinearLayout heroTop = row();
+        heroTop.setGravity(Gravity.CENTER_VERTICAL);
+        TextView heroTitle = text("المتبقي من ميزانية الشهر", 14, false, Color.rgb(222, 255, 246));
+        heroTitle.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        heroTop.addView(heroTitle, new LinearLayout.LayoutParams(0, dp(44), 1));
+        TextView eye = text(privacyMode() ? "🙈" : "👁️", 22, true, Color.WHITE);
+        eye.setGravity(Gravity.CENTER);
+        eye.setClickable(true);
+        eye.setBackground(bg(Color.argb(60, 255, 255, 255), 18));
+        eye.setOnClickListener(v -> togglePrivacyMode());
+        heroTop.addView(eye, new LinearLayout.LayoutParams(dp(48), dp(42)));
+        hero.addView(heroTop, matchWrap());
+
         TextView rem = text(money(remaining), 32, true, Color.WHITE);
         rem.setGravity(Gravity.RIGHT);
         hero.addView(rem, matchWrap());
@@ -957,23 +977,19 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams pvlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10));
         pvlp.setMargins(0, dp(12), 0, dp(4));
         hero.addView(pv, pvlp);
-        TextView hint = text(budget <= 0 ? "حدد ميزانية الشهر عشان يبدأ الحساب" : "استهلاك الميزانية: " + Math.round(Math.min(progress, 1) * 100) + "%", 12, false, Color.rgb(220, 250, 242));
+        TextView hint = text(budget <= 0 ? "حدد ميزانية الشهر" : "استهلاك الميزانية: " + Math.round(Math.min(progress, 1) * 100) + "%", 12, false, Color.rgb(220, 250, 242));
         hero.addView(hint, matchWrap());
-        TextView editHint = text("اضغط هنا لفتح سجل العمليات وتعديل أي عملية", 12, true, Color.WHITE);
-        editHint.setPadding(0, dp(8), 0, 0);
-        hero.addView(editHint, matchWrap());
         root.addView(hero);
 
         LinearLayout actions = card();
         actions.addView(text("إجراءات سريعة", 18, true, DARK), matchWrap());
-        actions.addView(text("ضيف مصروف، زود الميزانية، أو راجع عمليات البنك بسرعة", 12, false, MUTED), matchWrap());
         LinearLayout ar1 = row();
-        addWeighted(ar1, actionCard("✍️", "إضافة كتابة", "مصروف أو دخل أو تعديل", BLUE, v -> manualDialog()), 1, 4);
-        addWeighted(ar1, actionCard("🎙️", "إضافة بالفويس", "قول: صرفت 20 " + db.currencySymbol(), PRIMARY, v -> startVoice()), 1, 4);
+        addWeighted(ar1, actionCard("✍️", "إضافة كتابة", "مثال واحد وفئة", BLUE, v -> manualDialog()), 1, 4);
+        addWeighted(ar1, actionCard("🎙️", "إضافة بالفويس", "قول مصروفك", PRIMARY, v -> startVoice()), 1, 4);
         actions.addView(ar1, matchWrap());
         LinearLayout ar2 = row();
-        addWeighted(ar2, actionCard("➕", "زود الميزانية", "إضافة مبلغ للشهر", PRIMARY_DARK, v -> budgetDialog("زود الميزانية بمبلغ", 1)), 1, 4);
-        addWeighted(ar2, actionCard("➖", "انقص الميزانية", "تقليل ميزانية الشهر", RED, v -> budgetDialog("انقص الميزانية بمبلغ", -1)), 1, 4);
+        addWeighted(ar2, actionCard("➕", "زود الميزانية", "زيادة الشهر", PRIMARY_DARK, v -> budgetDialog("زود الميزانية بمبلغ", 1)), 1, 4);
+        addWeighted(ar2, actionCard("➖", "انقص الميزانية", "تقليل الشهر", RED, v -> budgetDialog("انقص الميزانية بمبلغ", -1)), 1, 4);
         actions.addView(ar2, matchWrap());
         LinearLayout ar3 = row();
         addWeighted(ar3, actionCard("💵", L("محفظة الكاش", "Cash wallet"), L("إضافة أو صرف كاش", "Add or spend cash"), PRIMARY_DARK, v -> showCashWallet()), 1, 4);
@@ -1116,22 +1132,41 @@ public class MainActivity extends Activity {
     }
 
     private void manualDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(6), dp(18), dp(6));
+
         final EditText input = new EditText(this);
-        input.setMinLines(3);
+        input.setMinLines(2);
         input.setGravity(Gravity.RIGHT);
         input.setTextDirection(View.TEXT_DIRECTION_RTL);
-        input.setHint("مثال: صرفت 25 " + db.currencySymbol() + " قهوة\nأو: زود الميزانية 500\nأو: دخل 200 سداد شغل");
+        input.setHint("مثال: صرفت 25 " + db.currencySymbol() + " قهوة");
+        box.addView(input, matchWrap());
+
+        final String[] selectedCategory = new String[]{"عام"};
+        Button category = softBtn("الفئة: " + selectedCategory[0], PURPLE);
+        category.setOnClickListener(v -> categoryPickerDialog(selectedCategory[0], cat -> {
+            selectedCategory[0] = cat;
+            category.setText("الفئة: " + cat);
+        }));
+        box.addView(category);
+
         new AlertDialog.Builder(this)
                 .setTitle("إضافة كتابة")
-                .setView(input)
-                .setPositiveButton("إضافة", (d, w) -> handleManualInput(input.getText().toString()))
+                .setView(box)
+                .setPositiveButton("إضافة", (d, w) -> handleManualInput(input.getText().toString(), selectedCategory[0]))
                 .setNegativeButton("إلغاء", null).show();
     }
 
     private void handleManualInput(String text) {
+        handleManualInput(text, null);
+    }
+
+    private void handleManualInput(String text, String chosenCategory) {
         MessageParser.ParsedTransaction tx = MessageParser.parseManualText(text, db.getBudget());
         if (tx == null) { toast("مش قادر أفهم المبلغ"); return; }
         tx.currency = db.getCurrency();
+        if (chosenCategory != null && chosenCategory.trim().length() > 0) tx.category = chosenCategory;
         if ("BUDGET_INCREASE".equals(tx.type)) db.addToBudget(tx.amount);
         else if ("BUDGET_DECREASE".equals(tx.type)) db.addToBudget(-tx.amount);
         db.insertParsed(tx);

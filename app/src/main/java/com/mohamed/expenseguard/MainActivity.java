@@ -627,8 +627,10 @@ public class MainActivity extends Activity {
             String branch = BuildConfig.GITHUB_BRANCH == null ? "main" : BuildConfig.GITHUB_BRANCH.trim();
             if (repo.length() > 0 && repo.contains("/")) {
                 if (branch.length() == 0) branch = "main";
-                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/update.json");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/update.json");
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/update.json");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/update.json");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/update.json");
             }
@@ -668,6 +670,10 @@ public class MainActivity extends Activity {
             String repo = BuildConfig.GITHUB_REPOSITORY == null ? "" : BuildConfig.GITHUB_REPOSITORY.trim();
             String name = latestName == null ? "" : latestName.trim();
             if (repo.length() > 0 && repo.contains("/") && name.length() > 0) {
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/downloads/Masrofaty-latest.apk");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/downloads/Masrofaty-latest.apk");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/downloads/Masrofaty-v" + name + ".apk");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/downloads/Masrofaty-v" + name + ".apk");
                 addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/Masrofaty-v" + name + ".apk");
                 addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/Masrofaty-v" + name + ".apk");
                 addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/app-release.apk");
@@ -783,7 +789,7 @@ public class MainActivity extends Activity {
             LinearLayout warn = card(pale(ORANGE));
             warn.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
             warn.addView(text("التحديث لم يتم ربطه بعد", 18, true, ORANGE), matchWrap());
-            warn.addView(text("ارفع ملف .github/workflows/android.yml الجديد وشغل GitHub Actions مرة. بعدها هيتعمل update.json تلقائيًا في Releases والجذر.", 13, false, DARK), matchWrap());
+            warn.addView(text("ارفع ملف .github/workflows/android.yml الجديد وشغل GitHub Actions مرة. بعدها هيتعمل update.json وملف APK في مجلد downloads تلقائيًا.", 13, false, DARK), matchWrap());
             root.addView(warn);
         }
     }
@@ -837,7 +843,7 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 runOnUiThread(() -> new AlertDialog.Builder(this)
                         .setTitle("فشل فحص التحديث")
-                        .setMessage(e.getMessage() + "\n\nلو الخطأ HTTP 404: اتأكد إن الريبو Public أو إن update.json مرفوع كملف في GitHub Release، وشغل Actions بعد رفع workflow الجديد.")
+                        .setMessage(e.getMessage() + "\n\nلو الخطأ HTTP 404: اتأكد إن الريبو Public وإن GitHub Actions خلص بعلامة صح وعمل ملف downloads/Masrofaty-latest.apk.")
                         .setPositiveButton("تمام", null).show());
             }
         }).start();

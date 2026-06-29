@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 25,
-  "latestVersionName": "2.14",
+  "latestVersionCode": 26,
+  "latestVersionName": "2.15",
   "apkUrl": "",
-  "notes": "إصلاح رفع ملف APK تلقائيا على GitHub Release ليعمل التنزيل المباشر",
+  "notes": "إصلاح التحميل المباشر بدون الاعتماد على GitHub Releases",
   "dataVersion": "2026-06-29",
   "message": "يوجد تحديث جديد متاح الآن"
 }

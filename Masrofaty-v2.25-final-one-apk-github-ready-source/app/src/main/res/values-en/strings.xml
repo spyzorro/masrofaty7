@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Masrofaty</string>
+    <string name="update_json_url"></string>
+    <string name="firebase_api_key"></string>
+    <string name="firebase_app_id"></string>
+    <string name="firebase_project_id"></string>
+    <string name="google_web_client_id"></string>
+</resources>

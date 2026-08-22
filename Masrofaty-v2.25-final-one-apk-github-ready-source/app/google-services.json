@@ -12,7 +12,20 @@
           "package_name": "com.mohamed.expenseguard"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "862871363044-tl6c6msqq9avgqb8g60hsfa2u2v2jsss.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.mohamed.expenseguard",
+            "certificate_hash": "09cc3c0445b93f4dc4a7f6b969ee97793e67697a"
+          }
+        },
+        {
+          "client_id": "862871363044-m8k72eb17r9bv7ls33882vliiplruunn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBulR7DZAV1hnoiKnTS52fYKcpzn0cVMYU"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "862871363044-m8k72eb17r9bv7ls33882vliiplruunn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

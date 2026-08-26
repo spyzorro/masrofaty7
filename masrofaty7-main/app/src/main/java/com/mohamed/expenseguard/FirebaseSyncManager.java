@@ -203,7 +203,7 @@ public class FirebaseSyncManager {
             map.put("backupJson", backup);
             map.put("updatedAt", Timestamp.now());
             map.put("appName", "مصروفاتي");
-            map.put("version", "2.37");
+            map.put("version", "2.38");
             map.put("recordsCount", db.userDataCount());
             firestore.collection("users").document(user.getUid()).collection("backups").document("current")
                     .set(map)

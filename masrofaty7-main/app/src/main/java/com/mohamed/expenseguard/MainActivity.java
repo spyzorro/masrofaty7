@@ -2094,7 +2094,7 @@ public class MainActivity extends Activity {
         if (!"OWED_TO_ME".equals(d.direction) || !"SAR".equalsIgnoreCase(d.currency)) return "";
         String converted = sarToEgpText(sarAmount);
         if (converted.length() == 0) return "المقابل بالمصري: حدث سعر الريال من الزر فوق";
-        return "المقابل بالمصري: " + converted + " حسب " + db.getSetting("sar_egp_source", "بنك القاهرة");
+        return "المقابل بالمصري: " + converted + " حسب بنك مصر";
     }
 
     private String sarToEgpText(double sarAmount) {
@@ -2107,22 +2107,22 @@ public class MainActivity extends Activity {
     private String sarRateStatusLine() {
         double buy = db.getDoubleSetting("sar_egp_buy", 0);
         double sell = db.getDoubleSetting("sar_egp_sell", 0);
-        String source = db.getSetting("sar_egp_source", "بنك القاهرة");
-        if (buy <= 0) return "سعر الريال: اضغط تحديث لجلب سعر بنك القاهرة";
+        if (buy <= 0) return "سعر الريال: اضغط تحديث لجلب سعر بنك مصر";
         String day = db.getSetting("sar_egp_day", "");
-        return "سعر الريال: شراء " + String.format(Locale.US, "%.4f", buy) + " / بيع " + String.format(Locale.US, "%.4f", sell) + " ج.م - " + source + (day.length() > 0 ? " - " + day : "");
+        return "سعر الريال: شراء " + String.format(Locale.US, "%.4f", buy) + " / بيع " + String.format(Locale.US, "%.4f", sell) + " ج.م - بنك مصر" + (day.length() > 0 ? " - " + day : "");
     }
 
     private void refreshSarEgpRate(boolean force, boolean redrawDebts) {
         if (sarRateRefreshRunning) return;
-        if (!force && db.getDoubleSetting("sar_egp_buy", 0) > 0 && dayKey(System.currentTimeMillis()).equals(db.getSetting("sar_egp_day", ""))) return;
+        boolean alreadyBankMisr = "بنك مصر".equals(db.getSetting("sar_egp_source", ""));
+        if (!force && alreadyBankMisr && db.getDoubleSetting("sar_egp_buy", 0) > 0 && dayKey(System.currentTimeMillis()).equals(db.getSetting("sar_egp_day", ""))) return;
         sarRateRefreshRunning = true;
         new Thread(() -> {
             try {
-                double[] rate = fetchSarRateFromBdc();
+                double[] rate = fetchSarRateFromBanqueMisr();
                 db.setSetting("sar_egp_buy", String.valueOf(rate[0]));
                 db.setSetting("sar_egp_sell", String.valueOf(rate[1]));
-                db.setSetting("sar_egp_source", rate[2] == 1 ? "بنك القاهرة" : "بنك مصر");
+                db.setSetting("sar_egp_source", "بنك مصر");
                 db.setSetting("sar_egp_day", dayKey(System.currentTimeMillis()));
                 runOnUiThread(() -> {
                     sarRateRefreshRunning = false;
@@ -2138,23 +2138,23 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    private double[] fetchSarRateFromBdc() throws Exception {
+    private double[] fetchSarRateFromBanqueMisr() throws Exception {
         try {
-            String text = webText("https://www.bdc.com.eg/bdcwebsite/fx-rates.html");
+            String text = webText("https://www.banquemisr.com/Home/CAPITAL%20MARKETS/Exchange%20rates%20and%20currencies?sc_lang=ar-EG");
             double[] parsed = parseSarRate(text);
-            if (parsed[0] > 0) return new double[]{parsed[0], parsed[1], 1};
+            if (parsed[0] > 0) return parsed;
         } catch (Exception ignored) {}
         String text = webText("https://www.banquemisr.com/en/CAPITAL-MARKETS/Exchange-Rates-and-Currencies");
         double[] parsed = parseSarRate(text);
         if (parsed[0] <= 0) throw new Exception("SAR rate not found");
-        return new double[]{parsed[0], parsed[1], 2};
+        return parsed;
     }
 
     private String webText(String url) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(12000);
         c.setReadTimeout(12000);
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.37");
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.38");
         StringBuilder html = new StringBuilder();
         try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"))) {
             String line;
@@ -2166,7 +2166,7 @@ public class MainActivity extends Activity {
     private double[] parseSarRate(String text) {
         String t = text == null ? "" : text;
         Pattern[] patterns = new Pattern[]{
-                Pattern.compile("(?:Saudi\\s+Riyal|Saudi\\s+Riyal\\s*\\(SAR\\)|SAR|الريال\\s+السعودي)[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s+([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("(?:Saudi\\s+Riyal|Saudi\\s+Riyal\\s*\\(SAR\\)|SAR|الريال\\s+السعود[ييى]|ريال\\s+سعود[ييى])[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s+([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE),
                 Pattern.compile("(?:SAREGP|Saudi\\s+Arabia\\s+Riyal)[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s*(?:EGP)?[^0-9]{0,80}([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE)
         };
         for (Pattern p : patterns) {

@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 48,
-  "latestVersionName": "2.37",
+  "latestVersionCode": 49,
+  "latestVersionName": "2.38",
   "apkUrl": "https://github.com/spyzorro/masrofaty7/releases/latest/download/Masrofaty-latest.apk",
-  "notes": "ربط ديون الريال اللي ليك بالمصري حسب سعر بنك القاهرة، وتصحيح حساب الجنيه الذهب بسعر الجنيه المنشور",
+  "notes": "تحديث مصدر سعر الريال مقابل الجنيه ليكون بنك مصر من الرابط العربي الرسمي",
   "dataVersion": "2026-08-13",
   "message": "نسخة واحدة كاملة متاحة الآن - استخدم FINAL-Masrofaty-ONE-APK"
 }

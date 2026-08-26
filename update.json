@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 44,
-  "latestVersionName": "2.33",
-  "apkUrl": "https://github.com/spyzorro/masrofaty7/releases/latest/download/Masrofaty-latest.apk",
-  "notes": "تصحيح أسعار الذهب لتطابق eDahab يوميًا مع عرض بيع/شراء وسعر الجنيه الذهب",
-  "dataVersion": "2026-08-13",
-  "message": "نسخة واحدة كاملة متاحة الآن - استخدم FINAL-Masrofaty-ONE-APK"
+  "latestVersionCode": 30,
+  "latestVersionName": "2.19",
+  "apkUrl": "https://raw.githubusercontent.com/spyzorro/masrofaty7/main/downloads/Masrofaty-latest.apk",
+  "notes": "تحديث جديد متاح للتحميل المباشر",
+  "dataVersion": "2026-06-29",
+  "message": "يوجد تحديث جديد متاح الآن"
 }

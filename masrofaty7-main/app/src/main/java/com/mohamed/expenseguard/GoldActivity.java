@@ -71,7 +71,7 @@ public class GoldActivity extends Activity {
         sc.addView(content);
 
         content.addView(tv("🪙 مدخراتي من الذهب", 24, true));
-        content.addView(tv("سجّل الوزن والعيار، والتطبيق يحسب قيمة البيع الحالية بالجنيه المصري.", 13, false));
+        content.addView(tv("سجّل الوزن والعيار، والجنيه الذهب يتحسب بسعر الجنيه المنشور في الموقع نفسه.", 13, false));
         status = tv("", 12, false);
         content.addView(status);
 
@@ -173,7 +173,8 @@ public class GoldActivity extends Activity {
             c.setPadding(dp(12), dp(9), dp(12), dp(9));
             c.setBackgroundColor(Color.WHITE);
             c.addView(tv((g.label == null || g.label.isEmpty() ? "ذهب" : g.label) + " • عيار " + g.karat, 17, true));
-            c.addView(tv(String.format(Locale.US, "%.3f جرام  •  القيمة حسب بيع الموقع %s", g.grams, money(value)), 14, false));
+            String valueLabel = isGoldPound(g) && goldPoundPrice > 0 ? "القيمة حسب سعر الجنيه الذهب بالموقع " : "القيمة حسب بيع الموقع ";
+            c.addView(tv(String.format(Locale.US, "%.3f جرام  •  %s%s", g.grams, valueLabel, money(value)), 14, false));
             if (cashout > 0 && Math.abs(cashout - value) > 0.01) c.addView(tv("لو هتبيع للتاجر حسب شراء الموقع: " + money(cashout), 12, false));
             if (g.purchasePrice > 0) c.addView(tv("سعر الشراء المسجل: " + money(g.purchasePrice) + "  •  الفرق: " + money(value - g.purchasePrice), 12, false));
             LinearLayout a = new LinearLayout(this);
@@ -202,7 +203,7 @@ public class GoldActivity extends Activity {
     }
 
     private double valueFor(ExpenseDbHelper.GoldHolding g, boolean siteSellPrice) {
-        if (siteSellPrice && isGoldPound(g) && goldPoundPrice > 0) return goldPoundPrice;
+        if (isGoldPound(g) && goldPoundPrice > 0) return goldPoundPrice;
         int i = idx(g.karat);
         double gramPrice = siteSellPrice ? sell[i] : buy[i];
         return g.grams * gramPrice;

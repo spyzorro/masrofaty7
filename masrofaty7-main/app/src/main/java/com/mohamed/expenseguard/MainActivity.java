@@ -55,6 +55,8 @@ import java.io.OutputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONObject;
 import org.json.JSONArray;
@@ -96,6 +98,7 @@ public class MainActivity extends Activity {
     private long updateDownloadId = -1L;
     private String updateDownloadFileName = "";
     private BroadcastReceiver updateDownloadReceiver;
+    private boolean sarRateRefreshRunning = false;
 
     private boolean isEn() { return db != null && "en".equals(db.getSetting("language", "ar")); }
     private String L(String ar, String en) { return isEn() ? en : ar; }
@@ -402,9 +405,14 @@ public class MainActivity extends Activity {
         if (privacyMode()) return "****";
         double sar = db.getDebtTotal(direction, "SAR");
         double egp = db.getDebtTotal(direction, "EGP");
-        if (sar > 0 && egp > 0) return moneyCurrency(sar, "SAR") + " | " + moneyCurrency(egp, "EGP");
+        String sarText = moneyCurrency(sar, "SAR");
+        if ("OWED_TO_ME".equals(direction) && sar > 0) {
+            String converted = sarToEgpText(sar);
+            if (converted.length() > 0) sarText += " ≈ " + converted;
+        }
+        if (sar > 0 && egp > 0) return sarText + " | " + moneyCurrency(egp, "EGP");
         if (egp > 0) return moneyCurrency(egp, "EGP");
-        return moneyCurrency(sar, "SAR");
+        return sarText;
     }
 
     private LinearLayout.LayoutParams matchWrap() {
@@ -2002,6 +2010,7 @@ public class MainActivity extends Activity {
         hero.addView(text("متابعة اللي ليك واللي عليك", 14, false, Color.rgb(235, 231, 255)), matchWrap());
         hero.addView(text("ليك: " + debtSummary("OWED_TO_ME"), 25, true, Color.WHITE), matchWrap());
         hero.addView(text("عليك: " + debtSummary("OWE_TO_OTHERS"), 21, true, Color.rgb(255, 236, 236)), matchWrap());
+        hero.addView(text(sarRateStatusLine(), 12, false, Color.rgb(235, 231, 255)), matchWrap());
         hero.addView(text("حدد تاريخ ووقت للسداد أو التحصيل وهيجيلك إشعار بالاسم والمبلغ", 12, false, Color.rgb(235, 231, 255)), matchWrap());
         root.addView(hero);
 
@@ -2011,10 +2020,12 @@ public class MainActivity extends Activity {
         root.addView(actions, matchWrap());
 
         Button pay = softBtn("تسجيل دفعة / سداد", PRIMARY); pay.setOnClickListener(v -> manualDebtPaymentDialog()); root.addView(pay);
+        Button rate = softBtn("تحديث سعر الريال مقابل الجنيه", BLUE); rate.setOnClickListener(v -> refreshSarEgpRate(true, true)); root.addView(rate);
         Button settings = softBtn("إعدادات تذكيرات الديون", ORANGE); settings.setOnClickListener(v -> showSecurityAndReminderSettings()); root.addView(settings);
 
         addDebtSection("📥 فلوس ليا عند الناس", "OWED_TO_ME", "هنا الأشخاص اللي أنت مستني تاخد منهم فلوس");
         addDebtSection("📤 ناس ليها فلوس عندي", "OWE_TO_OTHERS", "هنا الأشخاص اللي عليك تسدد لهم فلوس");
+        refreshSarEgpRate(false, true);
     }
 
     private void addDebtSection(String title, String direction, String emptyMsg) {
@@ -2054,6 +2065,8 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(9));
         dlp.setMargins(0, dp(10), 0, dp(6)); c.addView(dpv, dlp);
         c.addView(text("الأصل: " + debtMoney(d, d.amount) + " | المدفوع: " + debtMoney(d, d.paid), 13, false, MUTED), matchWrap());
+        String egpValue = debtSarToEgpLine(d, remaining);
+        if (egpValue.length() > 0) c.addView(text(egpValue, 13, true, PURPLE), matchWrap());
         c.addView(text(debtDueText(d), 13, true, d.dueDateMillis > 0 && d.dueDateMillis < System.currentTimeMillis() && !"PAID".equals(d.status) ? RED : MUTED), matchWrap());
         if (d.notes != null && d.notes.length() > 0) c.addView(text("ملاحظات: " + d.notes, 13, false, MUTED), matchWrap());
         if (d.whatsapp != null && d.whatsapp.trim().length() > 0) {
@@ -2075,6 +2088,99 @@ public class MainActivity extends Activity {
 
     private String debtMoney(ExpenseDbHelper.Debt d, double amount) {
         return moneyCurrency(amount, d.currency == null || d.currency.trim().isEmpty() ? db.getCurrency() : d.currency);
+    }
+
+    private String debtSarToEgpLine(ExpenseDbHelper.Debt d, double sarAmount) {
+        if (!"OWED_TO_ME".equals(d.direction) || !"SAR".equalsIgnoreCase(d.currency)) return "";
+        String converted = sarToEgpText(sarAmount);
+        if (converted.length() == 0) return "المقابل بالمصري: حدث سعر الريال من الزر فوق";
+        return "المقابل بالمصري: " + converted + " حسب " + db.getSetting("sar_egp_source", "بنك القاهرة");
+    }
+
+    private String sarToEgpText(double sarAmount) {
+        if (privacyMode()) return "****";
+        double rate = db.getDoubleSetting("sar_egp_buy", 0);
+        if (rate <= 0 || sarAmount <= 0) return "";
+        return moneyCurrency(sarAmount * rate, "EGP");
+    }
+
+    private String sarRateStatusLine() {
+        double buy = db.getDoubleSetting("sar_egp_buy", 0);
+        double sell = db.getDoubleSetting("sar_egp_sell", 0);
+        String source = db.getSetting("sar_egp_source", "بنك القاهرة");
+        if (buy <= 0) return "سعر الريال: اضغط تحديث لجلب سعر بنك القاهرة";
+        String day = db.getSetting("sar_egp_day", "");
+        return "سعر الريال: شراء " + String.format(Locale.US, "%.4f", buy) + " / بيع " + String.format(Locale.US, "%.4f", sell) + " ج.م - " + source + (day.length() > 0 ? " - " + day : "");
+    }
+
+    private void refreshSarEgpRate(boolean force, boolean redrawDebts) {
+        if (sarRateRefreshRunning) return;
+        if (!force && db.getDoubleSetting("sar_egp_buy", 0) > 0 && dayKey(System.currentTimeMillis()).equals(db.getSetting("sar_egp_day", ""))) return;
+        sarRateRefreshRunning = true;
+        new Thread(() -> {
+            try {
+                double[] rate = fetchSarRateFromBdc();
+                db.setSetting("sar_egp_buy", String.valueOf(rate[0]));
+                db.setSetting("sar_egp_sell", String.valueOf(rate[1]));
+                db.setSetting("sar_egp_source", rate[2] == 1 ? "بنك القاهرة" : "بنك مصر");
+                db.setSetting("sar_egp_day", dayKey(System.currentTimeMillis()));
+                runOnUiThread(() -> {
+                    sarRateRefreshRunning = false;
+                    if (force) toast("تم تحديث سعر الريال");
+                    if (redrawDebts) showDebts();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    sarRateRefreshRunning = false;
+                    if (force) toast("تعذر تحديث سعر الريال الآن");
+                });
+            }
+        }).start();
+    }
+
+    private double[] fetchSarRateFromBdc() throws Exception {
+        try {
+            String text = webText("https://www.bdc.com.eg/bdcwebsite/fx-rates.html");
+            double[] parsed = parseSarRate(text);
+            if (parsed[0] > 0) return new double[]{parsed[0], parsed[1], 1};
+        } catch (Exception ignored) {}
+        String text = webText("https://www.banquemisr.com/en/CAPITAL-MARKETS/Exchange-Rates-and-Currencies");
+        double[] parsed = parseSarRate(text);
+        if (parsed[0] <= 0) throw new Exception("SAR rate not found");
+        return new double[]{parsed[0], parsed[1], 2};
+    }
+
+    private String webText(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(12000);
+        c.setReadTimeout(12000);
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.37");
+        StringBuilder html = new StringBuilder();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"))) {
+            String line;
+            while ((line = r.readLine()) != null) html.append(line).append(' ');
+        }
+        return normalizeNumbers(html.toString().replaceAll("<[^>]+>", " ").replace("&nbsp;", " ").replaceAll("\\s+", " "));
+    }
+
+    private double[] parseSarRate(String text) {
+        String t = text == null ? "" : text;
+        Pattern[] patterns = new Pattern[]{
+                Pattern.compile("(?:Saudi\\s+Riyal|Saudi\\s+Riyal\\s*\\(SAR\\)|SAR|الريال\\s+السعودي)[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s+([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("(?:SAREGP|Saudi\\s+Arabia\\s+Riyal)[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s*(?:EGP)?[^0-9]{0,80}([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE)
+        };
+        for (Pattern p : patterns) {
+            Matcher m = p.matcher(t);
+            if (!m.find()) continue;
+            double buy = parseWebNumber(m.group(1));
+            double sell = parseWebNumber(m.group(2));
+            if (buy > 0 && sell > 0) return new double[]{buy, sell};
+        }
+        return new double[]{0, 0};
+    }
+
+    private double parseWebNumber(String s) {
+        try { return Double.parseDouble((s == null ? "" : s).replace(",", "")); } catch (Exception e) { return 0; }
     }
 
     private String debtDueText(ExpenseDbHelper.Debt d) {
@@ -2115,6 +2221,8 @@ public class MainActivity extends Activity {
                     if (a > 0 && name.getText().toString().trim().length() > 0) {
                         long id = db.addDebt(name.getText().toString().trim(), a, whatsapp.getText().toString(), facebook.getText().toString(), notes.getText().toString(), direction, dueMs, selectedCurrency[0]);
                         if (dueMs > 0) scheduleDebtReminder(id, name.getText().toString().trim(), a, direction, dueMs);
+                        autoCloudBackup();
+                        if ("OWED_TO_ME".equals(direction) && "SAR".equals(selectedCurrency[0])) refreshSarEgpRate(false, false);
                         toast("تم الحفظ" + (dueMs > 0 ? " وتم ضبط التذكير" : "")); showDebts();
                     }
                 }).setNegativeButton("إلغاء", null).show();
@@ -2175,6 +2283,7 @@ public class MainActivity extends Activity {
             double a = parseAmount(input.getText().toString());
             if (a <= 0) { toast("اكتب المبلغ"); return; }
             db.addDebtPayment(debt.id, a, "دفعة يدوية", -1);
+            autoCloudBackup();
             toast("تم حفظ الدفعة");
             dialog.dismiss();
             showDebts();
@@ -2236,6 +2345,7 @@ public class MainActivity extends Activity {
             if (flags != 0) getContentResolver().takePersistableUriPermission(uri, flags);
         } catch (Exception ignored) { }
         db.addDebtPayment(pendingDebtScreenshotDebtId, pendingDebtScreenshotAmount, pendingDebtScreenshotNote, -1, uri.toString());
+        autoCloudBackup();
         pendingDebtScreenshotDebtId = -1;
         pendingDebtScreenshotAmount = 0;
         pendingDebtScreenshotNote = "";
@@ -2487,8 +2597,8 @@ public class MainActivity extends Activity {
         double remaining = Math.max(0, d.amount - d.paid);
         boolean iOwe = "OWE_TO_OTHERS".equals(d.direction);
         String message = iOwe
-                ? "السلام عليكم، للتذكير عليا ليك مبلغ " + money(remaining) + " وهسدده في أقرب وقت."
-                : "السلام عليكم، للتذكير ليا عندك مبلغ " + money(remaining) + " يا ريت تراجعني في ميعاد السداد. شكرًا";
+                ? "السلام عليكم، للتذكير عليا ليك مبلغ " + debtMoney(d, remaining) + " وهسدده في أقرب وقت."
+                : "السلام عليكم، للتذكير ليا عندك مبلغ " + debtMoney(d, remaining) + " يا ريت تراجعني في ميعاد السداد. شكرًا";
         openUrl("https://wa.me/" + cleanPhone(d.whatsapp) + "?text=" + Uri.encode(message));
     }
 
@@ -2577,6 +2687,18 @@ public class MainActivity extends Activity {
             }
             return Double.parseDouble(v);
         } catch (Exception e) { return 0; }
+    }
+
+    private String normalizeNumbers(String value) {
+        if (value == null) return "";
+        return value
+                .replace('٠', '0').replace('١', '1').replace('٢', '2').replace('٣', '3').replace('٤', '4')
+                .replace('٥', '5').replace('٦', '6').replace('٧', '7').replace('٨', '8').replace('٩', '9')
+                .replace('٬', ',').replace('٫', '.');
+    }
+
+    private String dayKey(long time) {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(time));
     }
 
     private long parseDateTime(String value) {

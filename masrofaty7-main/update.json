@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 47,
-  "latestVersionName": "2.36",
+  "latestVersionCode": 48,
+  "latestVersionName": "2.37",
   "apkUrl": "https://github.com/spyzorro/masrofaty7/releases/latest/download/Masrofaty-latest.apk",
-  "notes": "أرشيف شهور أوضح، تنبيهات الميزانية عند 80% و100%، وأهداف ادخار للمبلغ أو الذهب",
+  "notes": "ربط ديون الريال اللي ليك بالمصري حسب سعر بنك القاهرة، وتصحيح حساب الجنيه الذهب بسعر الجنيه المنشور",
   "dataVersion": "2026-08-13",
   "message": "نسخة واحدة كاملة متاحة الآن - استخدم FINAL-Masrofaty-ONE-APK"
 }

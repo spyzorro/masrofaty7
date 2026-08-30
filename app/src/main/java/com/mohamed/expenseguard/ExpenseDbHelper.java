@@ -33,7 +33,7 @@ import org.json.JSONObject;
 
 public class ExpenseDbHelper extends SQLiteOpenHelper {
     private static final String DB_NAME = "expense_guard.db";
-    private static final int DB_VERSION = 6;
+    private static final int DB_VERSION = 8;
     private static final String PUBLIC_BACKUP_FILE = "masrofaty_backup.json";
     private static final String PUBLIC_BACKUP_FILE_ALT = "masrofaty_backup_DO_NOT_DELETE.json";
     private static final String PUBLIC_BACKUP_DIR = Environment.DIRECTORY_DOCUMENTS + "/Masrofaty/";
@@ -76,7 +76,12 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
                 "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                 "monthKey TEXT UNIQUE, budget REAL, spent REAL, extraIncome REAL, cashBalance REAL," +
                 "closedAt INTEGER, summary TEXT)");
+        createProductivityTables(db);
         setSetting(db, "monthly_budget", "0");
+        setSetting(db, "monthly_budget_template", "0");
+        setSetting(db, "monthly_budget_applied_month", "");
+        setSetting(db, "budget_alert_80_month", "");
+        setSetting(db, "budget_alert_100_month", "");
         setSetting(db, "currency", "SAR");
         setSetting(db, "debt_remind_day", "1");
         setSetting(db, "debt_remind_2h", "1");
@@ -126,6 +131,8 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             try { setSetting(db, "subscription_remind_3d", "1"); } catch (Exception ignored) {}
             try { setSetting(db, "subscription_remind_1d", "1"); } catch (Exception ignored) {}
             try { setSetting(db, "last_open_month", currentMonthKey()); } catch (Exception ignored) {}
+            try { setSetting(db, "monthly_budget_template", getSetting("monthly_budget", "0")); } catch (Exception ignored) {}
+            try { setSetting(db, "monthly_budget_applied_month", ""); } catch (Exception ignored) {}
             try { seedDefaultCategories(db); } catch (Exception ignored) {}
         }
         if (oldVersion < 5) {
@@ -135,11 +142,105 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         if (oldVersion < 6) {
             try { db.execSQL("ALTER TABLE debt_payments ADD COLUMN screenshotUri TEXT DEFAULT ''"); } catch (Exception ignored) {}
         }
+        if (oldVersion < 7) createProductivityTables(db);
+        if (oldVersion < 8) {
+            try { createSavingGoalsTable(db); } catch (Exception ignored) {}
+            try { setSetting(db, "budget_alert_80_month", ""); } catch (Exception ignored) {}
+            try { setSetting(db, "budget_alert_100_month", ""); } catch (Exception ignored) {}
+        }
     }
 
+    private void createProductivityTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS tasks(" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,notes TEXT,priority INTEGER," +
+                "dueAt INTEGER,repeatMinutes INTEGER,completed INTEGER,createdAt INTEGER,updatedAt INTEGER)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS gold_holdings(" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,label TEXT,karat INTEGER,grams REAL," +
+                "purchasePrice REAL,createdAt INTEGER,updatedAt INTEGER)");
+        createSavingGoalsTable(db);
+    }
+
+    private void createSavingGoalsTable(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS saving_goals(" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,type TEXT,target REAL,current REAL,unit TEXT," +
+                "completed INTEGER,createdAt INTEGER,updatedAt INTEGER)");
+    }
+
+    public long saveTask(Long id, String title, String notes, int priority, long dueAt, long repeatMinutes, boolean completed) {
+        ContentValues cv = new ContentValues(); long now = System.currentTimeMillis();
+        cv.put("title", title); cv.put("notes", notes); cv.put("priority", priority); cv.put("dueAt", dueAt);
+        cv.put("repeatMinutes", repeatMinutes); cv.put("completed", completed ? 1 : 0); cv.put("updatedAt", now);
+        long result;
+        if (id == null) { cv.put("createdAt", now); result = getWritableDatabase().insert("tasks", null, cv); }
+        else { getWritableDatabase().update("tasks", cv, "id=?", new String[]{String.valueOf(id)}); result = id; }
+        autoLocalBackupAfterChange(); return result;
+    }
+    public List<TaskItem> getTasks(boolean includeCompleted) {
+        List<TaskItem> list = new ArrayList<>(); String where = includeCompleted ? "" : " WHERE completed=0";
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT * FROM tasks" + where + " ORDER BY completed ASC,priority DESC,CASE WHEN dueAt=0 THEN 1 ELSE 0 END,dueAt ASC,createdAt DESC", null)) {
+            while (c.moveToNext()) list.add(TaskItem.from(c));
+        } return list;
+    }
+    public TaskItem getTask(long id) {
+        try (Cursor c = getReadableDatabase().rawQuery("SELECT * FROM tasks WHERE id=?", new String[]{String.valueOf(id)})) { if (c.moveToFirst()) return TaskItem.from(c); }
+        return null;
+    }
+    public void setTaskCompleted(long id, boolean completed) { ContentValues cv=new ContentValues(); cv.put("completed",completed?1:0); cv.put("updatedAt",System.currentTimeMillis()); getWritableDatabase().update("tasks",cv,"id=?",new String[]{String.valueOf(id)}); autoLocalBackupAfterChange(); }
+    public void deleteTask(long id) { getWritableDatabase().delete("tasks","id=?",new String[]{String.valueOf(id)}); autoLocalBackupAfterChange(); }
+
+    public long saveGoldHolding(Long id, String label, int karat, double grams, double purchasePrice) {
+        ContentValues cv=new ContentValues(); long now=System.currentTimeMillis(); cv.put("label",label); cv.put("karat",karat); cv.put("grams",grams); cv.put("purchasePrice",purchasePrice); cv.put("updatedAt",now);
+        long result; if(id==null){cv.put("createdAt",now);result=getWritableDatabase().insert("gold_holdings",null,cv);}else{getWritableDatabase().update("gold_holdings",cv,"id=?",new String[]{String.valueOf(id)});result=id;} autoLocalBackupAfterChange(); return result;
+    }
+    public List<GoldHolding> getGoldHoldings(){List<GoldHolding> list=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM gold_holdings ORDER BY createdAt DESC",null)){while(c.moveToNext())list.add(GoldHolding.from(c));}return list;}
+    public void deleteGoldHolding(long id){getWritableDatabase().delete("gold_holdings","id=?",new String[]{String.valueOf(id)});autoLocalBackupAfterChange();}
+    public double getTotalGoldGrams(){try(Cursor c=getReadableDatabase().rawQuery("SELECT COALESCE(SUM(grams),0) FROM gold_holdings",null)){return c.moveToFirst()?c.getDouble(0):0;}catch(Exception e){return 0;}}
+
+    public long saveSavingGoal(Long id, String title, String type, double target, double current, String unit, boolean completed) {
+        ContentValues cv=new ContentValues(); long now=System.currentTimeMillis();
+        cv.put("title", title == null || title.trim().isEmpty() ? "هدف ادخار" : title.trim());
+        cv.put("type", "GOLD_GRAMS".equals(type) ? "GOLD_GRAMS" : "MONEY");
+        cv.put("target", Math.max(0, target)); cv.put("current", Math.max(0, current));
+        cv.put("unit", unit == null || unit.trim().isEmpty() ? ("GOLD_GRAMS".equals(type) ? "جرام" : currencySymbol()) : unit.trim());
+        cv.put("completed", completed ? 1 : 0); cv.put("updatedAt", now);
+        long result; if(id==null){cv.put("createdAt",now);result=getWritableDatabase().insert("saving_goals",null,cv);}else{getWritableDatabase().update("saving_goals",cv,"id=?",new String[]{String.valueOf(id)});result=id;}
+        autoLocalBackupAfterChange(); return result;
+    }
+    public List<SavingGoal> getSavingGoals(boolean includeCompleted){List<SavingGoal> list=new ArrayList<>();String where=includeCompleted?"":" WHERE completed=0";try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM saving_goals"+where+" ORDER BY completed ASC,updatedAt DESC,createdAt DESC",null)){while(c.moveToNext())list.add(SavingGoal.from(c));}return list;}
+    public void deleteSavingGoal(long id){getWritableDatabase().delete("saving_goals","id=?",new String[]{String.valueOf(id)});autoLocalBackupAfterChange();}
+    public void setSavingGoalCompleted(long id, boolean completed){ContentValues cv=new ContentValues();cv.put("completed",completed?1:0);cv.put("updatedAt",System.currentTimeMillis());getWritableDatabase().update("saving_goals",cv,"id=?",new String[]{String.valueOf(id)});autoLocalBackupAfterChange();}
+    public void syncSavingGoalProgressFromHoldings(long id, String type){SavingGoal g=getSavingGoal(id);if(g==null)return;double current="GOLD_GRAMS".equals(type)?getTotalGoldGrams():getCashBalance();saveSavingGoal(id,g.title,g.type,g.target,current,g.unit,g.completed==1);}
+    private SavingGoal getSavingGoal(long id){try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM saving_goals WHERE id=?",new String[]{String.valueOf(id)})){if(c.moveToFirst())return SavingGoal.from(c);}return null;}
+
     public double getBudget() { return getDoubleSetting("monthly_budget", 0); }
-    public void setBudget(double value) { setSetting("monthly_budget", String.valueOf(Math.max(0, value))); }
+    public double getMonthlyBudgetTemplate() {
+        double template = getDoubleSetting("monthly_budget_template", 0);
+        return template > 0 ? template : getBudget();
+    }
+    public void setBudget(double value) {
+        double safe = Math.max(0, value);
+        setSetting("monthly_budget", String.valueOf(safe));
+        setSetting("monthly_budget_template", String.valueOf(safe));
+        setSetting("monthly_budget_applied_month", currentMonthKey());
+        setSetting("budget_alert_80_month", "");
+        setSetting("budget_alert_100_month", "");
+    }
     public void addToBudget(double delta) { setBudget(getBudget() + delta); }
+    public int getMonthlyBudgetPercent() {
+        double budget = getBudget();
+        if (budget <= 0) return 0;
+        return (int)Math.floor((getMonthlySpent() * 100.0) / budget);
+    }
+    public boolean consumeMonthlyBudgetAlert(int levelPercent) {
+        if (levelPercent != 80 && levelPercent != 100) return false;
+        double budget = getBudget();
+        if (budget <= 0 || getMonthlyBudgetPercent() < levelPercent) return false;
+        String key = levelPercent == 100 ? "budget_alert_100_month" : "budget_alert_80_month";
+        String current = currentMonthKey();
+        if (current.equals(getSetting(key, ""))) return false;
+        setSetting(key, current);
+        return true;
+    }
 
     public String getCurrency() { return getSetting("currency", "SAR"); }
     public void setCurrency(String value) {
@@ -174,7 +275,11 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
 
     private boolean isBackupMetaKey(String key) {
         if (key == null) return false;
-        return key.equals("last_local_backup") || key.equals("last_local_restore") || key.equals("last_cloud_restore");
+        return key.equals("last_local_backup")
+                || key.equals("last_local_restore")
+                || key.equals("last_cloud_restore")
+                || key.equals("last_cloud_sync")
+                || key.equals("last_cloud_error");
     }
 
     public void autoLocalBackupAfterChange() {
@@ -190,6 +295,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         } finally {
             localBackupInProgress = false;
         }
+        try { FirebaseSyncManager.scheduleAutoBackup(appContext); } catch (Exception ignored) {}
     }
 
     private void writeChosenBackupText(String json) throws Exception {
@@ -812,7 +918,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     public List<Debt> getDebts() {
         List<Debt> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
-        try (Cursor c = db.rawQuery("SELECT * FROM debts ORDER BY status ASC, dueDateMillis ASC, updatedAt DESC", null)) {
+        try (Cursor c = db.rawQuery("SELECT * FROM debts WHERE status!='PAID' AND (amount-paid)>0.009 ORDER BY status ASC, dueDateMillis ASC, updatedAt DESC", null)) {
             while (c.moveToNext()) list.add(Debt.from(c));
         }
         return list;
@@ -830,7 +936,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         List<Debt> list = new ArrayList<>();
         SQLiteDatabase db = getReadableDatabase();
         String dir = "OWE_TO_OTHERS".equals(direction) ? "OWE_TO_OTHERS" : "OWED_TO_ME";
-        try (Cursor c = db.rawQuery("SELECT * FROM debts WHERE direction=? ORDER BY status ASC, dueDateMillis ASC, updatedAt DESC", new String[]{dir})) {
+        try (Cursor c = db.rawQuery("SELECT * FROM debts WHERE direction=? AND status!='PAID' AND (amount-paid)>0.009 ORDER BY status ASC, dueDateMillis ASC, updatedAt DESC", new String[]{dir})) {
             while (c.moveToNext()) list.add(Debt.from(c));
         }
         return list;
@@ -1128,6 +1234,16 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             setSetting("last_open_month", current);
         }
     }
+    public void applyMonthlyBudgetForCurrentMonth() {
+        try {
+            String current = currentMonthKey();
+            String applied = getSetting("monthly_budget_applied_month", "");
+            if (current.equals(applied)) return;
+            double template = getMonthlyBudgetTemplate();
+            if (template > 0) setSetting("monthly_budget", String.valueOf(template));
+            setSetting("monthly_budget_applied_month", current);
+        } catch (Exception ignored) {}
+    }
     public void closeCurrentMonth() { closeMonth(currentMonthKey()); }
     private void closeMonth(String monthKey) {
         long[] range = monthRange(monthKey);
@@ -1192,6 +1308,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         root.put("subscriptions", tableToJson("subscriptions"));
         root.put("budget_categories", tableToJson("budget_categories"));
         root.put("month_archives", tableToJson("month_archives"));
+        root.put("tasks", tableToJson("tasks"));
+        root.put("gold_holdings", tableToJson("gold_holdings"));
+        root.put("saving_goals", tableToJson("saving_goals"));
         return root.toString();
     }
 
@@ -1215,8 +1334,34 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         return arr;
     }
 
+    public boolean backupHasData(String jsonText) {
+        try { return backupDataCount(new JSONObject(jsonText)) > 0; }
+        catch (Exception e) { return false; }
+    }
+
+    public int backupRecordCount(String jsonText) {
+        try { return backupDataCount(new JSONObject(jsonText)); }
+        catch (Exception e) { return 0; }
+    }
+
+    private int backupDataCount(JSONObject root) {
+        if (root == null) return 0;
+        int total = 0;
+        String[] tables = {"transactions", "debts", "debt_payments", "subscriptions", "budget_categories", "month_archives", "tasks", "gold_holdings", "saving_goals"};
+        for (String t : tables) {
+            JSONArray arr = root.optJSONArray(t);
+            if (arr != null) total += arr.length();
+        }
+        return total;
+    }
+
     public void importBackupJson(String jsonText) throws Exception {
+        importBackupJsonMerge(jsonText);
+    }
+
+    public void importBackupJsonReplace(String jsonText) throws Exception {
         JSONObject root = new JSONObject(jsonText);
+        if (backupDataCount(root) <= 0) throw new Exception("النسخة الاحتياطية فاضية ومش هتستبدل الداتا الحالية");
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
@@ -1226,6 +1371,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             db.delete("subscriptions", null, null);
             db.delete("budget_categories", null, null);
             db.delete("month_archives", null, null);
+            db.delete("tasks", null, null);
+            db.delete("gold_holdings", null, null);
+            db.delete("saving_goals", null, null);
 
             JSONObject settingsJson = root.optJSONObject("settings");
             if (settingsJson != null) {
@@ -1244,10 +1392,54 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             jsonToTable(db, "subscriptions", root.optJSONArray("subscriptions"));
             jsonToTable(db, "budget_categories", root.optJSONArray("budget_categories"));
             jsonToTable(db, "month_archives", root.optJSONArray("month_archives"));
+            jsonToTable(db, "tasks", root.optJSONArray("tasks"));
+            jsonToTable(db, "gold_holdings", root.optJSONArray("gold_holdings"));
+            jsonToTable(db, "saving_goals", root.optJSONArray("saving_goals"));
             setSetting(db, "last_cloud_restore", String.valueOf(System.currentTimeMillis()));
             db.setTransactionSuccessful();
         } finally {
             db.endTransaction();
+        }
+        autoLocalBackupAfterChange();
+    }
+
+    public void importBackupJsonMerge(String jsonText) throws Exception {
+        JSONObject root = new JSONObject(jsonText);
+        if (backupDataCount(root) <= 0) throw new Exception("النسخة الاحتياطية فاضية");
+        SQLiteDatabase db = getWritableDatabase();
+        String safetySnapshot = null;
+        try { safetySnapshot = exportBackupJson(); } catch (Exception ignored) {}
+        db.beginTransaction();
+        try {
+            JSONObject settingsJson = root.optJSONObject("settings");
+            if (settingsJson != null) {
+                JSONArray keys = settingsJson.names();
+                if (keys != null) {
+                    for (int i = 0; i < keys.length(); i++) {
+                        String key = keys.getString(i);
+                        if (key.startsWith("firebase_") || key.startsWith("google_")) continue;
+                        setSetting(db, key, settingsJson.optString(key, ""));
+                    }
+                }
+            }
+            jsonToTableMerge(db, "transactions", root.optJSONArray("transactions"), null);
+            jsonToTableMerge(db, "subscriptions", root.optJSONArray("subscriptions"), null);
+            jsonToTableMerge(db, "budget_categories", root.optJSONArray("budget_categories"), null);
+            jsonToTableMerge(db, "month_archives", root.optJSONArray("month_archives"), null);
+            jsonToTableMerge(db, "tasks", root.optJSONArray("tasks"), null);
+            jsonToTableMerge(db, "gold_holdings", root.optJSONArray("gold_holdings"), null);
+            jsonToTableMerge(db, "saving_goals", root.optJSONArray("saving_goals"), null);
+
+            JSONObject debtIdMap = jsonToTableMerge(db, "debts", root.optJSONArray("debts"), null);
+            jsonToTableMerge(db, "debt_payments", root.optJSONArray("debt_payments"), debtIdMap);
+
+            setSetting(db, "last_cloud_restore", String.valueOf(System.currentTimeMillis()));
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+        if (safetySnapshot != null && safetySnapshot.trim().length() > 0) {
+            try { writeFile(privateRestoreSnapshotFile(), safetySnapshot); } catch (Exception ignored) {}
         }
         autoLocalBackupAfterChange();
     }
@@ -1268,6 +1460,68 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
                 else cv.put(k, String.valueOf(v));
             }
             db.insertWithOnConflict(table, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+        }
+    }
+
+    private JSONObject jsonToTableMerge(SQLiteDatabase db, String table, JSONArray arr, JSONObject debtIdMap) throws Exception {
+        JSONObject idMap = new JSONObject();
+        if (arr == null) return idMap;
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.getJSONObject(i);
+            ContentValues cv = jsonToContentValues(o);
+            long oldId = o.optLong("id", 0);
+            if ("debt_payments".equals(table) && debtIdMap != null && o.has("debtId")) {
+                String mapped = debtIdMap.optString(String.valueOf(o.optLong("debtId", 0)), "");
+                if (mapped.length() > 0) cv.put("debtId", Long.parseLong(mapped));
+            }
+            long inserted = db.insertWithOnConflict(table, null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+            if (inserted > 0) {
+                if (oldId > 0) idMap.put(String.valueOf(oldId), inserted);
+                continue;
+            }
+            if (oldId > 0 && rowSame(db, table, o, oldId)) {
+                idMap.put(String.valueOf(oldId), oldId);
+                continue;
+            }
+            cv.remove("id");
+            long cloned = db.insertWithOnConflict(table, null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+            if (oldId > 0) idMap.put(String.valueOf(oldId), cloned > 0 ? cloned : oldId);
+        }
+        return idMap;
+    }
+
+    private ContentValues jsonToContentValues(JSONObject o) throws Exception {
+        ContentValues cv = new ContentValues();
+        JSONArray names = o.names();
+        if (names == null) return cv;
+        for (int n = 0; n < names.length(); n++) {
+            String k = names.getString(n);
+            Object v = o.opt(k);
+            if (v == null || v == JSONObject.NULL) cv.putNull(k);
+            else if (v instanceof Integer || v instanceof Long) cv.put(k, ((Number) v).longValue());
+            else if (v instanceof Float || v instanceof Double) cv.put(k, ((Number) v).doubleValue());
+            else cv.put(k, String.valueOf(v));
+        }
+        return cv;
+    }
+
+    private boolean rowSame(SQLiteDatabase db, String table, JSONObject incoming, long id) {
+        try (Cursor c = db.rawQuery("SELECT * FROM " + table + " WHERE id=?", new String[]{String.valueOf(id)})) {
+            if (!c.moveToFirst()) return false;
+            JSONArray names = incoming.names();
+            if (names == null) return true;
+            for (int i = 0; i < names.length(); i++) {
+                String k = names.getString(i);
+                int idx = c.getColumnIndex(k);
+                if (idx < 0) continue;
+                Object v = incoming.opt(k);
+                String a = v == null || v == JSONObject.NULL ? "" : String.valueOf(v);
+                String b = c.isNull(idx) ? "" : c.getString(idx);
+                if (!a.equals(b)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -1302,10 +1556,14 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         return dataCount() > 0;
     }
 
+    public int userDataCount() {
+        return dataCount();
+    }
+
     private int dataCount() {
         int total = 0;
         SQLiteDatabase db = getReadableDatabase();
-        String[] tables = {"transactions", "debts", "subscriptions"};
+        String[] tables = {"transactions", "debts", "debt_payments", "subscriptions", "budget_categories", "month_archives", "tasks", "gold_holdings", "saving_goals"};
         for (String t : tables) {
             try (Cursor c = db.rawQuery("SELECT COUNT(*) FROM " + t, null)) {
                 if (c.moveToFirst()) total += c.getInt(0);
@@ -1318,6 +1576,12 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         File dir = appContext.getExternalFilesDir(null);
         if (dir == null) dir = appContext.getFilesDir();
         return new File(dir, "masrofaty_backup.json");
+    }
+
+    private File privateRestoreSnapshotFile() {
+        File dir = appContext.getExternalFilesDir(null);
+        if (dir == null) dir = appContext.getFilesDir();
+        return new File(dir, "masrofaty_before_restore.json");
     }
 
     private File publicBackupFile() {
@@ -1515,6 +1779,20 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             m.summary = c.getString(c.getColumnIndexOrThrow("summary"));
             return m;
         }
+    }
+
+    public static class TaskItem {
+        public long id,dueAt,repeatMinutes; public String title,notes; public int priority,completed;
+        static TaskItem from(Cursor c){TaskItem t=new TaskItem();t.id=c.getLong(c.getColumnIndexOrThrow("id"));t.title=c.getString(c.getColumnIndexOrThrow("title"));t.notes=c.getString(c.getColumnIndexOrThrow("notes"));t.priority=c.getInt(c.getColumnIndexOrThrow("priority"));t.dueAt=c.getLong(c.getColumnIndexOrThrow("dueAt"));t.repeatMinutes=c.getLong(c.getColumnIndexOrThrow("repeatMinutes"));t.completed=c.getInt(c.getColumnIndexOrThrow("completed"));return t;}
+    }
+    public static class GoldHolding {
+        public long id; public String label; public int karat; public double grams,purchasePrice;
+        static GoldHolding from(Cursor c){GoldHolding g=new GoldHolding();g.id=c.getLong(c.getColumnIndexOrThrow("id"));g.label=c.getString(c.getColumnIndexOrThrow("label"));g.karat=c.getInt(c.getColumnIndexOrThrow("karat"));g.grams=c.getDouble(c.getColumnIndexOrThrow("grams"));g.purchasePrice=c.getDouble(c.getColumnIndexOrThrow("purchasePrice"));return g;}
+    }
+
+    public static class SavingGoal {
+        public long id; public String title,type,unit; public double target,current; public int completed; public long createdAt,updatedAt;
+        static SavingGoal from(Cursor c){SavingGoal g=new SavingGoal();g.id=c.getLong(c.getColumnIndexOrThrow("id"));g.title=c.getString(c.getColumnIndexOrThrow("title"));g.type=c.getString(c.getColumnIndexOrThrow("type"));g.target=c.getDouble(c.getColumnIndexOrThrow("target"));g.current=c.getDouble(c.getColumnIndexOrThrow("current"));g.unit=c.getString(c.getColumnIndexOrThrow("unit"));g.completed=c.getInt(c.getColumnIndexOrThrow("completed"));g.createdAt=c.getLong(c.getColumnIndexOrThrow("createdAt"));g.updatedAt=c.getLong(c.getColumnIndexOrThrow("updatedAt"));return g;}
     }
 
     public static class Tx {

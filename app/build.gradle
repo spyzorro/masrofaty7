@@ -1,5 +1,9 @@
 plugins { id 'com.android.application' }
 
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
 def githubRepository = System.getenv("GITHUB_REPOSITORY") ?: ""
 def githubBranch = System.getenv("GITHUB_REF_NAME") ?: "main"
 
@@ -15,8 +19,8 @@ android {
         applicationId 'com.mohamed.expenseguard'
         minSdk 26
         targetSdk 35
-        versionCode 30
-        versionName '2.19'
+        versionCode 50
+        versionName '2.39'
         buildConfigField "String", "GITHUB_REPOSITORY", "\"${githubRepository}\""
         buildConfigField "String", "GITHUB_BRANCH", "\"${githubBranch}\""
     }

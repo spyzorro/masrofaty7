@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.AlarmManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.DownloadManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -53,10 +55,15 @@ import java.io.OutputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import com.google.firebase.auth.FirebaseUser;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 public class MainActivity extends Activity {
     private static final int REQ_VOICE = 44;
@@ -66,6 +73,7 @@ public class MainActivity extends Activity {
     private static final int REQ_EXPORT_BACKUP_FILE = 120;
     private static final int REQ_IMPORT_BACKUP_FILE = 121;
     private static final int REQ_DEBT_SCREENSHOT = 122;
+    private static final String BUDGET_ALERT_CHANNEL = "budget_alerts";
 
     private final int BG = Color.rgb(246, 250, 248);
     private final int DARK = Color.rgb(15, 31, 42);
@@ -90,6 +98,7 @@ public class MainActivity extends Activity {
     private long updateDownloadId = -1L;
     private String updateDownloadFileName = "";
     private BroadcastReceiver updateDownloadReceiver;
+    private boolean sarRateRefreshRunning = false;
 
     private boolean isEn() { return db != null && "en".equals(db.getSetting("language", "ar")); }
     private String L(String ar, String en) { return isEn() ? en : ar; }
@@ -97,13 +106,21 @@ public class MainActivity extends Activity {
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         db = new ExpenseDbHelper(this);
-        boolean restoredLocal = db.restoreLocalBackupIfEmpty();
-        db.autoArchiveIfNewMonth();
         syncManager = new FirebaseSyncManager(this, db);
         getWindow().getDecorView().setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         styleSystemBars();
         requestNeededPermissions();
         registerUpdateDownloadReceiver();
+        if (requireGoogleLoginIfNeeded()) return;
+        continueAfterGoogleReady();
+    }
+
+    private void continueAfterGoogleReady() {
+        boolean restoredLocal = db.restoreLocalBackupIfEmpty();
+        db.autoArchiveIfNewMonth();
+        db.applyMonthlyBudgetForCurrentMonth();
+        db.setSetting("google_auto_backup", "1");
+        db.setSetting("google_auto_restore", "1");
         showHome();
         if (restoredLocal) toast("تم استرجاع نسخة محلية تلقائيًا");
         else maybePromptBackupRestoreOnFreshInstall();
@@ -113,6 +130,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (db != null && syncManager != null && requireGoogleLoginIfNeeded()) return;
         if (!awaitingDeviceCredential && "1".equals(db.getSetting("app_lock_enabled", "0")) && !appUnlocked) {
             maybeShowAppLock();
         }
@@ -152,6 +170,45 @@ public class MainActivity extends Activity {
             if (checkSelfPermission(Manifest.permission.RECEIVE_SMS) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.RECEIVE_SMS);
             if (!perms.isEmpty()) requestPermissions(perms.toArray(new String[0]), REQ_CORE_PERMS);
         }
+    }
+
+    private boolean requireGoogleLoginIfNeeded() {
+        try {
+            FirebaseUser user = syncManager.currentUser();
+            if (user != null) return false;
+        } catch (Exception ignored) {}
+        showMandatoryGoogleLogin();
+        return true;
+    }
+
+    private void showMandatoryGoogleLogin() {
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.setBackgroundColor(BG);
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER_HORIZONTAL);
+        page.setPadding(dp(22), dp(34), dp(22), dp(34));
+        page.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        sv.addView(page, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout card = card();
+        card.addView(text("مطلوب تسجيل الدخول بحساب Google", 24, true, DARK), matchWrap());
+        card.addView(text("لا يمكن استخدام المصروفات أو المهام أو الذهب قبل تسجيل الدخول. بعد الدخول، أي تعديل يتم حفظه تلقائيًا على Google واسترجاعه تلقائيًا عند تغيير الموبايل أو إعادة تثبيت التطبيق.", 14, false, MUTED), matchWrap());
+        if (syncManager.hasConfig()) {
+            card.addView(pill("Google Sync جاهز داخل التطبيق", PRIMARY), matchWrap());
+        } else {
+            card.addView(pill("إعدادات Google ناقصة في نسخة التطبيق", ORANGE), matchWrap());
+            card.addView(text("ارفع النسخة الجديدة وفيها app/google-services.json ثم ابنِ APK من GitHub. المستخدم العادي لن يحتاج إدخال أي بيانات.", 13, false, MUTED), matchWrap());
+        }
+        Button login = btn("تسجيل الدخول بحساب Google");
+        login.setOnClickListener(v -> {
+            try { startActivityForResult(syncManager.signInIntent(), REQ_GOOGLE_SIGN_IN); }
+            catch (Exception e) { new AlertDialog.Builder(this).setTitle("المزامنة غير جاهزة").setMessage(e.getMessage()).setPositiveButton("تمام", null).show(); }
+        });
+        card.addView(login);
+        page.addView(card, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        setContentView(sv);
     }
 
     private int dp(float v) { return Math.round(v * getResources().getDisplayMetrics().density); }
@@ -203,9 +260,9 @@ public class MainActivity extends Activity {
         nav.setBackground(strokeBg(Color.WHITE, Color.rgb(222, 234, 230), 0, 1));
         nav.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
         addBottomButton(nav, "➕\nإضافة", PRIMARY, v -> openAddMenu());
-        addBottomButton(nav, "📋\nالسجل/مراجعة", BLUE, v -> openRecordsMenu());
-        addBottomButton(nav, "🏠\nالرئيسية", PRIMARY_DARK, v -> showHome());
-        addBottomButton(nav, "💰\nفلوس/كاش", PURPLE, v -> openMoneyMenu());
+        addBottomButton(nav, "🧾\nمصروفاتي", PRIMARY_DARK, v -> showHome());
+        addBottomButton(nav, "✅\nالمهام", PURPLE, v -> startActivity(new Intent(this, TaskActivity.class)));
+        addBottomButton(nav, "🪙\nالذهب", ORANGE, v -> startActivity(new Intent(this, GoldActivity.class)));
         addBottomButton(nav, "⚙️\nالمزيد", MUTED, v -> openMainMenu());
         return nav;
     }
@@ -256,6 +313,8 @@ public class MainActivity extends Activity {
         addMenuTile(box, "مراجعة الأونلاين والوارد", "راجع العمليات اللي محتاجة قرار", "🧾", ORANGE, v -> { dialog.dismiss(); showPending(); });
         addMenuTile(box, "الميزانية والمصروف", "تعديل الميزانية أو تصحيح المصروف الحالي", "⚙️", PRIMARY, v -> { dialog.dismiss(); budgetAndSpentDialog(); });
         addMenuTile(box, "حدود الفئات", "حدد سقف للأكل والمواصلات والفواتير", "🎯", ORANGE, v -> { dialog.dismiss(); showCategoryBudgets(); });
+        addMenuTile(box, "أهداف الادخار", "هدف مبلغ أو هدف جرامات ذهب ومتابعة التقدم", "🏁", PRIMARY, v -> { dialog.dismiss(); showSavingGoals(); });
+        addMenuTile(box, "مدخراتي من الذهب", "الوزن والعيار والقيمة الحالية بسعر مصر", "🪙", ORANGE, v -> { dialog.dismiss(); startActivity(new Intent(this, GoldActivity.class)); });
         dialog.show();
     }
 
@@ -346,9 +405,20 @@ public class MainActivity extends Activity {
         if (privacyMode()) return "****";
         double sar = db.getDebtTotal(direction, "SAR");
         double egp = db.getDebtTotal(direction, "EGP");
-        if (sar > 0 && egp > 0) return moneyCurrency(sar, "SAR") + " | " + moneyCurrency(egp, "EGP");
+        String sarText = moneyCurrency(sar, "SAR");
+        if ("OWED_TO_ME".equals(direction) && sar > 0) {
+            String converted = sarToEgpText(sar);
+            if (converted.length() > 0) sarText += " ≈ " + converted;
+        }
+        if (sar > 0 && egp > 0) return sarText + " | " + moneyCurrency(egp, "EGP");
         if (egp > 0) return moneyCurrency(egp, "EGP");
-        return moneyCurrency(sar, "SAR");
+        return sarText;
+    }
+
+    private String cashBalanceSummary(double cashBalance) {
+        String base = money(cashBalance);
+        String egpLine = cashSarToEgpLine(cashBalance);
+        return egpLine.length() == 0 ? base : base + "\n" + egpLine;
     }
 
     private LinearLayout.LayoutParams matchWrap() {
@@ -491,6 +561,7 @@ public class MainActivity extends Activity {
         addMoreTile(box, "التحديثات", "فحص سريع للتحديثات من GitHub", BLUE, v -> { dialog.dismiss(); showUpdateCenter(); });
         addMoreTile(box, "الإعدادات والخصوصية", "القفل، وضع الخصوصية، التذكيرات، والتنبيهات", ORANGE, v -> { dialog.dismiss(); showSecurityAndReminderSettings(); });
         addMoreTile(box, "اللغة والعملة", "عربي / English واختيار ريال أو جنيه", PRIMARY_DARK, v -> { dialog.dismiss(); openLanguageCurrencyMenu(); });
+        addMoreTile(box, "قائمة المهام", "مهام مستقلة، أولويات، مواعيد وتنبيهات متكررة", PURPLE, v -> { dialog.dismiss(); startActivity(new Intent(this, TaskActivity.class)); });
 
         dialog.show();
     }
@@ -520,6 +591,7 @@ public class MainActivity extends Activity {
 
 
     private void showGoogleSyncCenter() {
+        if (requireGoogleLoginIfNeeded()) return;
         setup("مزامنة Google");
         addHomeButton();
 
@@ -531,10 +603,8 @@ public class MainActivity extends Activity {
         root.addView(info);
 
         LinearLayout actions = card();
-        if (!syncManager.hasConfig()) {
-            actions.addView(text("مالك التطبيق لم يفعّل إعدادات Google بعد", 18, true, ORANGE), matchWrap());
-            actions.addView(text("بعد ما تضيف قيم Firebase في ملف strings.xml، المستخدمين هيشوفوا زر تسجيل الدخول فقط بدون أي إعدادات معقدة.", 13, false, MUTED), matchWrap());
-        }
+        actions.addView(pill("Google Sync جاهز ومفعل داخل التطبيق", PRIMARY), matchWrap());
+        actions.addView(text("لا تحتاج لإدخال Firebase API أو Web Client ID. بعد تسجيل الدخول يتم الحفظ والاسترجاع تلقائيًا لكل المصروفات والمهام والذهب.", 13, false, MUTED), matchWrap());
 
         Button login = btn(user == null ? "تسجيل الدخول بحساب Google" : "تغيير حساب Google");
         login.setOnClickListener(v -> {
@@ -571,10 +641,10 @@ public class MainActivity extends Activity {
         }));
         actions.addView(upload);
 
-        Button restore = softBtn("استرجاع النسخة", ORANGE);
+        Button restore = softBtn("دمج واسترجاع آمن من Google", ORANGE);
         restore.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("استرجاع الداتا")
-                .setMessage("هيتم استبدال الداتا الموجودة بالنسخة المحفوظة على حسابك. تكمل؟")
+                .setMessage("هيتم دمج النسخة المحفوظة على Google مع الداتا الموجودة بدون مسح الجداول الحالية. التطبيق كمان هيحفظ Snapshot قبل الاسترجاع. تكمل؟")
                 .setPositiveButton("استرجاع", (d, w) -> syncManager.restoreBackup(new FirebaseSyncManager.Callback() {
                     @Override public void ok(String message) { runOnUiThread(() -> { toast(message); showHome(); }); }
                     @Override public void fail(String message) { runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this).setTitle("تعذر الاسترجاع").setMessage(message).setPositiveButton("تمام", null).show()); }
@@ -585,7 +655,7 @@ public class MainActivity extends Activity {
         if (user != null) {
             Button logout = softBtn("تسجيل الخروج", RED);
             logout.setOnClickListener(v -> syncManager.signOut(this, new FirebaseSyncManager.Callback() {
-                @Override public void ok(String message) { runOnUiThread(() -> { toast(message); showGoogleSyncCenter(); }); }
+                @Override public void ok(String message) { runOnUiThread(() -> { toast(message); showMandatoryGoogleLogin(); }); }
                 @Override public void fail(String message) { runOnUiThread(() -> toast(message)); }
             }));
             actions.addView(logout);
@@ -621,7 +691,7 @@ public class MainActivity extends Activity {
         Button restorePhone = softBtn("محاولة استرجاع تلقائي من Downloads", MUTED);
         restorePhone.setOnClickListener(v -> new AlertDialog.Builder(this)
                 .setTitle("استرجاع من الهاتف")
-                .setMessage("هيتم استبدال الداتا الحالية لو التطبيق قدر يقرأ النسخة الموجودة في Downloads/Masrofaty. لو ملقاش حاجة استخدم زر استيراد نسخة من ملف.")
+                .setMessage("هيتم دمج النسخة الموجودة في Downloads/Masrofaty مع الداتا الحالية بدون مسحها. لو ملقاش حاجة استخدم زر استيراد نسخة من ملف.")
                 .setPositiveButton("استرجاع", (d,w) -> { boolean ok = db.restoreLocalBackupForce(); toast(ok ? "تم الاسترجاع من ملف الهاتف" : "ملقتش نسخة. استخدم استيراد نسخة من ملف"); showHome(); })
                 .setNegativeButton("إلغاء", null).show());
         local.addView(restorePhone);
@@ -649,10 +719,8 @@ public class MainActivity extends Activity {
             String branch = BuildConfig.GITHUB_BRANCH == null ? "main" : BuildConfig.GITHUB_BRANCH.trim();
             if (repo.length() > 0 && repo.contains("/")) {
                 if (branch.length() == 0) branch = "main";
-                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json");
-                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/update.json");
-                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/update.json");
                 addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/update.json");
+                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/" + branch + "/update.json");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/update.json");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/update.json");
             }
@@ -692,14 +760,10 @@ public class MainActivity extends Activity {
             String repo = BuildConfig.GITHUB_REPOSITORY == null ? "" : BuildConfig.GITHUB_REPOSITORY.trim();
             String name = latestName == null ? "" : latestName.trim();
             if (repo.length() > 0 && repo.contains("/") && name.length() > 0) {
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/Masrofaty-latest.apk");
+                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/Masrofaty-latest.apk");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/downloads/Masrofaty-latest.apk");
                 addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/downloads/Masrofaty-latest.apk");
-                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/main/downloads/Masrofaty-v" + name + ".apk");
-                addUniqueUrl(urls, "https://raw.githubusercontent.com/" + repo + "/master/downloads/Masrofaty-v" + name + ".apk");
-                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/Masrofaty-v" + name + ".apk");
-                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/Masrofaty-v" + name + ".apk");
-                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/download/v" + name + "/app-release.apk");
-                addUniqueUrl(urls, "https://github.com/" + repo + "/releases/latest/download/app-release.apk");
             }
         } catch (Exception ignored) {}
         return urls;
@@ -749,7 +813,7 @@ public class MainActivity extends Activity {
                 } else {
                     new AlertDialog.Builder(this)
                             .setTitle("ملف التحديث غير موجود")
-                            .setMessage("التحديث متسجل في update.json، لكن ملف APK مش موجود على GitHub Release أو الريبو Private.\n\nاعمل الآتي:\n1. ارفع ملف workflow الجديد.\n2. شغل GitHub Actions وانتظر علامة الصح.\n3. افتح Releases وتأكد إن فيه ملف Masrofaty-v" + latestName + ".apk.\n4. لو الناس هتحمل من خارج حسابك، خلي الريبو Public.")
+                            .setMessage("التحديث متسجل في update.json، لكن ملف APK مش موجود على GitHub Release أو الريبو Private.\n\nاعمل الآتي:\n1. ارفع النسخة النهائية الجديدة.\n2. شغل GitHub Actions وانتظر علامة الصح.\n3. افتح Releases وتأكد إن فيه ملف Masrofaty-latest.apk.\n4. لو الناس هتحمل من خارج حسابك، خلي الريبو Public.")
                             .setPositiveButton("تمام", null).show();
                 }
             });
@@ -1144,6 +1208,14 @@ public class MainActivity extends Activity {
         addWeighted(ar5, actionCard("⏳", "عملية معلقة", "لما تكون مش متأكد", ORANGE, v -> pendingManualDialog()), 1, 4);
         addWeighted(ar5, actionCard("🎯", "حدود الفئات", "سقف لكل فئة", PURPLE, v -> showCategoryBudgets()), 1, 4);
         actions.addView(ar5, matchWrap());
+        LinearLayout ar6 = row();
+        addWeighted(ar6, actionCard("✅", "قائمة المهام", "مواعيد وتنبيهات", PURPLE, v -> startActivity(new Intent(this, TaskActivity.class))), 1, 4);
+        addWeighted(ar6, actionCard("🪙", "مدخراتي ذهب", "القيمة بسعر مصر", ORANGE, v -> startActivity(new Intent(this, GoldActivity.class))), 1, 4);
+        actions.addView(ar6, matchWrap());
+        LinearLayout ar7 = row();
+        addWeighted(ar7, actionCard("🏁", "أهداف الادخار", "فلوس أو ذهب", PRIMARY, v -> showSavingGoals()), 1, 4);
+        addWeighted(ar7, actionCard("🗓️", "أرشيف الشهور", "كل شهر بإجمالياته", PRIMARY_DARK, v -> showMonthArchive()), 1, 4);
+        actions.addView(ar7, matchWrap());
         root.addView(actions);
 
         LinearLayout stats1 = row();
@@ -1163,7 +1235,7 @@ public class MainActivity extends Activity {
 
         LinearLayout stats4 = row();
         addWeighted(stats4, statCard("🔁", L("اشتراكات شهرية", "Monthly subs"), money(subscriptionsTotal), BLUE, v -> showSubscriptions()), 1, 4);
-        addWeighted(stats4, statCard("💵", L("محفظة الكاش", "Cash wallet"), money(cashBalance), PRIMARY_DARK, v -> showCashWallet()), 1, 4);
+        addWeighted(stats4, statCard("💵", L("محفظة الكاش", "Cash wallet"), cashBalanceSummary(cashBalance), PRIMARY_DARK, v -> showCashWallet()), 1, 4);
         root.addView(stats4, matchWrap());
 
         if (pending > 0) {
@@ -1176,6 +1248,8 @@ public class MainActivity extends Activity {
         }
 
         addCategoryBudgetAlertsToHome();
+        addMonthlyBudgetWarningToHome(spent, budget);
+        maybeShowMonthlyBudgetAlert();
 
         LinearLayout chart = card();
         chart.addView(text("توزيع مصاريف الشهر", 18, true, DARK), matchWrap());
@@ -1223,6 +1297,57 @@ public class MainActivity extends Activity {
                 .setPositiveButton("تعديل الحد", (d, w) -> showCategoryBudgets())
                 .setNegativeButton("تمام", null)
                 .show();
+    }
+
+    private void addMonthlyBudgetWarningToHome(double spent, double budget) {
+        if (budget <= 0) return;
+        int pct = (int)Math.floor((spent * 100.0) / budget);
+        if (pct < 80) return;
+        int col = pct >= 100 ? RED : ORANGE;
+        LinearLayout box = card(pale(col));
+        box.setBackground(strokeBg(pale(col), lighten(col), 22, 1));
+        box.addView(text(pct >= 100 ? "تنبيه الميزانية: وصلت 100%" : "تنبيه الميزانية: قربت من 80%", 18, true, col), matchWrap());
+        box.addView(text("صرفت " + money(spent) + " من " + money(budget) + "، المتبقي " + money(budget - spent), 13, true, DARK), matchWrap());
+        Button edit = softBtn("تعديل الميزانية", PRIMARY_DARK);
+        edit.setOnClickListener(v -> budgetAndSpentDialog());
+        box.addView(edit);
+        root.addView(box);
+    }
+
+    private void maybeShowMonthlyBudgetAlert() {
+        int pct = db.getMonthlyBudgetPercent();
+        int level = pct >= 100 ? 100 : pct >= 80 ? 80 : 0;
+        if (level == 0 || !db.consumeMonthlyBudgetAlert(level)) return;
+        double spent = db.getMonthlySpent();
+        double budget = db.getBudget();
+        String title = level == 100 ? "الميزانية وصلت 100%" : "الميزانية وصلت 80%";
+        String body = "صرفت " + money(spent) + " من " + money(budget) + " خلال الشهر الحالي.";
+        showBudgetNotification(title, body);
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(body)
+                .setPositiveButton("تعديل الميزانية", (d, w) -> budgetAndSpentDialog())
+                .setNegativeButton("تمام", null)
+                .show();
+    }
+
+    private void showBudgetNotification(String title, String body) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager nm = (NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= 26 && nm != null) {
+            nm.createNotificationChannel(new NotificationChannel(BUDGET_ALERT_CHANNEL, "تنبيهات الميزانية", NotificationManager.IMPORTANCE_HIGH));
+        }
+        Intent intent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, 8020, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        NotificationCompat.Builder b = new NotificationCompat.Builder(this, BUDGET_ALERT_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH);
+        NotificationManagerCompat.from(this).notify(8020 + db.currentMonthKey().hashCode() % 1000, b.build());
     }
 
     private void languageDialog() {
@@ -1285,6 +1410,7 @@ public class MainActivity extends Activity {
                     db.adjustMonthlySpentTo(newSpent);
                     toast("تم التعديل");
                     autoCloudBackup();
+                    maybeShowMonthlyBudgetAlert();
                     showHome();
                 })
                 .setNegativeButton("إلغاء", null)
@@ -1309,6 +1435,7 @@ public class MainActivity extends Activity {
                     String raw = title + " " + amount;
                     db.insertManual(mode == -1 ? "BUDGET_DECREASE" : mode == 1 ? "BUDGET_INCREASE" : "BUDGET_SET", "CONFIRMED", amount, title, 0, raw);
                     autoCloudBackup();
+                    maybeShowMonthlyBudgetAlert();
                     showHome();
                 }).setNegativeButton("إلغاء", null).show();
     }
@@ -1354,6 +1481,7 @@ public class MainActivity extends Activity {
         long id = db.insertParsed(tx);
         autoCloudBackup();
         if (id > 0 && tx.affectsBudget == 1 && "CONFIRMED".equals(tx.status)) maybeShowCategoryBudgetAlert(tx.category);
+        if (id > 0 && tx.affectsBudget == 1 && "CONFIRMED".equals(tx.status)) maybeShowMonthlyBudgetAlert();
         toast("تم التسجيل");
         showHome();
     }
@@ -1471,15 +1599,15 @@ public class MainActivity extends Activity {
                     toast(message);
                     if ("1".equals(db.getSetting("google_auto_restore", "1"))) {
                         syncManager.restoreBackup(new FirebaseSyncManager.Callback() {
-                            @Override public void ok(String msg) { runOnUiThread(() -> { toast("تم استرجاع الداتا تلقائيًا"); showHome(); }); }
-                            @Override public void fail(String msg) { runOnUiThread(() -> { autoCloudBackup(); showGoogleSyncCenter(); }); }
+                            @Override public void ok(String msg) { runOnUiThread(() -> { toast("تم دمج واسترجاع الداتا تلقائيًا"); continueAfterGoogleReady(); }); }
+                            @Override public void fail(String msg) { runOnUiThread(() -> { if (db.hasUserData()) autoCloudBackup(); continueAfterGoogleReady(); }); }
                         });
                     } else {
                         autoCloudBackup();
-                        showGoogleSyncCenter();
+                        continueAfterGoogleReady();
                     }
                 }); }
-                @Override public void fail(String message) { runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this).setTitle("مشكلة تسجيل الدخول").setMessage(message).setPositiveButton("تمام", null).show()); }
+                @Override public void fail(String message) { runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this).setTitle("مشكلة تسجيل الدخول").setMessage(message).setPositiveButton("تمام", (d,w) -> showMandatoryGoogleLogin()).show()); }
             });
         }
     }
@@ -1575,7 +1703,7 @@ public class MainActivity extends Activity {
             br.close();
             db.importBackupJson(sb.toString());
             db.saveLocalBackup();
-            toast("تم استرجاع الداتا من الملف");
+            toast("تم دمج واسترجاع الداتا من الملف");
             showHome();
         } catch (Exception e) {
             new AlertDialog.Builder(this).setTitle("تعذر الاستيراد").setMessage(e.getMessage()).setPositiveButton("تمام", null).show();
@@ -1585,6 +1713,7 @@ public class MainActivity extends Activity {
     private void autoCloudBackup() {
         try { db.saveLocalBackup(); } catch (Exception ignored) {}
         try { saveBackupToChosenUri(false); } catch (Exception ignored) {}
+        if (!db.hasUserData()) return;
         if (!"1".equals(db.getSetting("google_auto_backup", "1"))) return;
         long now = System.currentTimeMillis();
         if (now - lastAutoBackupAttempt < 30000L) return;
@@ -1736,10 +1865,10 @@ public class MainActivity extends Activity {
             c.addView(smart);
 
             if ("PENDING_ONLINE".equals(tx.status)) {
-                Button approve = softBtn("خصم من الميزانية", RED); approve.setOnClickListener(v -> { db.approveOnline(tx.id); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); toast("تم الخصم"); showPending(); }); c.addView(approve);
+                Button approve = softBtn("خصم من الميزانية", RED); approve.setOnClickListener(v -> { db.approveOnline(tx.id); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); maybeShowMonthlyBudgetAlert(); toast("تم الخصم"); showPending(); }); c.addView(approve);
                 Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
             } else if ("PENDING_REVIEW".equals(tx.status)) {
-                Button approve = softBtn("اعتماد كخصم", RED); approve.setOnClickListener(v -> { db.updateTransactionDecision(tx.id, tx.amount, tx.title, tx.category, "PENDING_APPROVED_EXPENSE", "CONFIRMED", 1); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); toast("تم اعتماد العملية"); showPending(); }); c.addView(approve);
+                Button approve = softBtn("اعتماد كخصم", RED); approve.setOnClickListener(v -> { db.updateTransactionDecision(tx.id, tx.amount, tx.title, tx.category, "PENDING_APPROVED_EXPENSE", "CONFIRMED", 1); autoCloudBackup(); maybeShowCategoryBudgetAlert(tx.category); maybeShowMonthlyBudgetAlert(); toast("تم اعتماد العملية"); showPending(); }); c.addView(approve);
                 Button save = softBtn("حفظ فقط", MUTED); save.setOnClickListener(v -> { db.saveOnly(tx.id); autoCloudBackup(); showPending(); }); c.addView(save);
                 Button del = softBtn("حذف العملية", RED); del.setOnClickListener(v -> { db.deleteTransaction(tx.id); autoCloudBackup(); toast("تم الحذف"); showPending(); }); c.addView(del);
             } else if ("PENDING_INCOMING".equals(tx.status)) {
@@ -1823,6 +1952,7 @@ public class MainActivity extends Activity {
         if ("EXPENSE".equals(decision)) {
             db.updateTransactionDecision(tx.id, a, title, category, "SMART_REVIEW_EXPENSE", "CONFIRMED", 1);
             maybeShowCategoryBudgetAlert(category);
+            maybeShowMonthlyBudgetAlert();
             toast("تم تسجيلها كخصم");
         } else if ("INCOME".equals(decision)) {
             db.updateTransactionDecision(tx.id, a, title, category, "EXTRA_INCOME", "CONFIRMED", 0);
@@ -1848,7 +1978,7 @@ public class MainActivity extends Activity {
                 .setView(input)
                 .setPositiveButton("خصم", (d, w) -> {
                     double a = parseAmount(input.getText().toString());
-                    if (a > 0) { db.updateTransactionAmount(tx.id, a); db.approveOnline(tx.id); maybeShowCategoryBudgetAlert(tx.category); showPending(); }
+                    if (a > 0) { db.updateTransactionAmount(tx.id, a); db.approveOnline(tx.id); maybeShowCategoryBudgetAlert(tx.category); maybeShowMonthlyBudgetAlert(); showPending(); }
                 }).setNegativeButton("إلغاء", null).show();
     }
 
@@ -1886,6 +2016,7 @@ public class MainActivity extends Activity {
         hero.addView(text("متابعة اللي ليك واللي عليك", 14, false, Color.rgb(235, 231, 255)), matchWrap());
         hero.addView(text("ليك: " + debtSummary("OWED_TO_ME"), 25, true, Color.WHITE), matchWrap());
         hero.addView(text("عليك: " + debtSummary("OWE_TO_OTHERS"), 21, true, Color.rgb(255, 236, 236)), matchWrap());
+        hero.addView(text(sarRateStatusLine(), 12, false, Color.rgb(235, 231, 255)), matchWrap());
         hero.addView(text("حدد تاريخ ووقت للسداد أو التحصيل وهيجيلك إشعار بالاسم والمبلغ", 12, false, Color.rgb(235, 231, 255)), matchWrap());
         root.addView(hero);
 
@@ -1895,10 +2026,12 @@ public class MainActivity extends Activity {
         root.addView(actions, matchWrap());
 
         Button pay = softBtn("تسجيل دفعة / سداد", PRIMARY); pay.setOnClickListener(v -> manualDebtPaymentDialog()); root.addView(pay);
+        Button rate = softBtn("تحديث سعر الريال مقابل الجنيه", BLUE); rate.setOnClickListener(v -> refreshSarEgpRate(true, true)); root.addView(rate);
         Button settings = softBtn("إعدادات تذكيرات الديون", ORANGE); settings.setOnClickListener(v -> showSecurityAndReminderSettings()); root.addView(settings);
 
         addDebtSection("📥 فلوس ليا عند الناس", "OWED_TO_ME", "هنا الأشخاص اللي أنت مستني تاخد منهم فلوس");
         addDebtSection("📤 ناس ليها فلوس عندي", "OWE_TO_OTHERS", "هنا الأشخاص اللي عليك تسدد لهم فلوس");
+        refreshSarEgpRate(false, true);
     }
 
     private void addDebtSection(String title, String direction, String emptyMsg) {
@@ -1938,6 +2071,8 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(9));
         dlp.setMargins(0, dp(10), 0, dp(6)); c.addView(dpv, dlp);
         c.addView(text("الأصل: " + debtMoney(d, d.amount) + " | المدفوع: " + debtMoney(d, d.paid), 13, false, MUTED), matchWrap());
+        String egpValue = debtSarToEgpLine(d, remaining);
+        if (egpValue.length() > 0) c.addView(text(egpValue, 13, true, PURPLE), matchWrap());
         c.addView(text(debtDueText(d), 13, true, d.dueDateMillis > 0 && d.dueDateMillis < System.currentTimeMillis() && !"PAID".equals(d.status) ? RED : MUTED), matchWrap());
         if (d.notes != null && d.notes.length() > 0) c.addView(text("ملاحظات: " + d.notes, 13, false, MUTED), matchWrap());
         if (d.whatsapp != null && d.whatsapp.trim().length() > 0) {
@@ -1959,6 +2094,111 @@ public class MainActivity extends Activity {
 
     private String debtMoney(ExpenseDbHelper.Debt d, double amount) {
         return moneyCurrency(amount, d.currency == null || d.currency.trim().isEmpty() ? db.getCurrency() : d.currency);
+    }
+
+    private String debtSarToEgpLine(ExpenseDbHelper.Debt d, double sarAmount) {
+        if (!"OWED_TO_ME".equals(d.direction) || !"SAR".equalsIgnoreCase(d.currency)) return "";
+        String converted = sarToEgpText(sarAmount);
+        if (converted.length() == 0) return "المقابل بالمصري: حدث سعر الريال من الزر فوق";
+        return "المقابل بالمصري: " + converted + " حسب بنك مصر";
+    }
+
+    private String cashSarToEgpLine(double cashAmount) {
+        if (!"SAR".equalsIgnoreCase(db.getCurrency()) || cashAmount <= 0 || privacyMode()) return "";
+        String converted = sarToEgpText(cashAmount);
+        if (converted.length() == 0) return "يعادل بالمصري: حدث سعر الريال";
+        return "يعادل بالمصري: " + converted + " حسب بنك مصر";
+    }
+
+    private String sarToEgpText(double sarAmount) {
+        if (privacyMode()) return "****";
+        double rate = db.getDoubleSetting("sar_egp_buy", 0);
+        if (rate <= 0 || sarAmount <= 0) return "";
+        return moneyCurrency(sarAmount * rate, "EGP");
+    }
+
+    private String sarRateStatusLine() {
+        double buy = db.getDoubleSetting("sar_egp_buy", 0);
+        double sell = db.getDoubleSetting("sar_egp_sell", 0);
+        if (buy <= 0) return "سعر الريال: اضغط تحديث لجلب سعر بنك مصر";
+        String day = db.getSetting("sar_egp_day", "");
+        return "سعر الريال: شراء " + String.format(Locale.US, "%.4f", buy) + " / بيع " + String.format(Locale.US, "%.4f", sell) + " ج.م - بنك مصر" + (day.length() > 0 ? " - " + day : "");
+    }
+
+    private void refreshSarEgpRate(boolean force, boolean redrawDebts) {
+        refreshSarEgpRate(force, redrawDebts, false);
+    }
+
+    private void refreshSarEgpRate(boolean force, boolean redrawDebts, boolean redrawCash) {
+        if (sarRateRefreshRunning) return;
+        boolean alreadyBankMisr = "بنك مصر".equals(db.getSetting("sar_egp_source", ""));
+        if (!force && alreadyBankMisr && db.getDoubleSetting("sar_egp_buy", 0) > 0 && dayKey(System.currentTimeMillis()).equals(db.getSetting("sar_egp_day", ""))) return;
+        sarRateRefreshRunning = true;
+        new Thread(() -> {
+            try {
+                double[] rate = fetchSarRateFromBanqueMisr();
+                db.setSetting("sar_egp_buy", String.valueOf(rate[0]));
+                db.setSetting("sar_egp_sell", String.valueOf(rate[1]));
+                db.setSetting("sar_egp_source", "بنك مصر");
+                db.setSetting("sar_egp_day", dayKey(System.currentTimeMillis()));
+                runOnUiThread(() -> {
+                    sarRateRefreshRunning = false;
+                    if (force) toast("تم تحديث سعر الريال");
+                    if (redrawDebts) showDebts();
+                    if (redrawCash) showCashWallet();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    sarRateRefreshRunning = false;
+                    if (force) toast("تعذر تحديث سعر الريال الآن");
+                });
+            }
+        }).start();
+    }
+
+    private double[] fetchSarRateFromBanqueMisr() throws Exception {
+        try {
+            String text = webText("https://www.banquemisr.com/Home/CAPITAL%20MARKETS/Exchange%20rates%20and%20currencies?sc_lang=ar-EG");
+            double[] parsed = parseSarRate(text);
+            if (parsed[0] > 0) return parsed;
+        } catch (Exception ignored) {}
+        String text = webText("https://www.banquemisr.com/en/CAPITAL-MARKETS/Exchange-Rates-and-Currencies");
+        double[] parsed = parseSarRate(text);
+        if (parsed[0] <= 0) throw new Exception("SAR rate not found");
+        return parsed;
+    }
+
+    private String webText(String url) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(12000);
+        c.setReadTimeout(12000);
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.39");
+        StringBuilder html = new StringBuilder();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"))) {
+            String line;
+            while ((line = r.readLine()) != null) html.append(line).append(' ');
+        }
+        return normalizeNumbers(html.toString().replaceAll("<[^>]+>", " ").replace("&nbsp;", " ").replaceAll("\\s+", " "));
+    }
+
+    private double[] parseSarRate(String text) {
+        String t = text == null ? "" : text;
+        Pattern[] patterns = new Pattern[]{
+                Pattern.compile("(?:Saudi\\s+Riyal|Saudi\\s+Riyal\\s*\\(SAR\\)|SAR|الريال\\s+السعود[ييى]|ريال\\s+سعود[ييى])[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s+([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE),
+                Pattern.compile("(?:SAREGP|Saudi\\s+Arabia\\s+Riyal)[^0-9]{0,120}([0-9]+(?:[\\.,][0-9]+)?)\\s*(?:EGP)?[^0-9]{0,80}([0-9]+(?:[\\.,][0-9]+)?)", Pattern.CASE_INSENSITIVE)
+        };
+        for (Pattern p : patterns) {
+            Matcher m = p.matcher(t);
+            if (!m.find()) continue;
+            double buy = parseWebNumber(m.group(1));
+            double sell = parseWebNumber(m.group(2));
+            if (buy > 0 && sell > 0) return new double[]{buy, sell};
+        }
+        return new double[]{0, 0};
+    }
+
+    private double parseWebNumber(String s) {
+        try { return Double.parseDouble((s == null ? "" : s).replace(",", "")); } catch (Exception e) { return 0; }
     }
 
     private String debtDueText(ExpenseDbHelper.Debt d) {
@@ -1999,6 +2239,8 @@ public class MainActivity extends Activity {
                     if (a > 0 && name.getText().toString().trim().length() > 0) {
                         long id = db.addDebt(name.getText().toString().trim(), a, whatsapp.getText().toString(), facebook.getText().toString(), notes.getText().toString(), direction, dueMs, selectedCurrency[0]);
                         if (dueMs > 0) scheduleDebtReminder(id, name.getText().toString().trim(), a, direction, dueMs);
+                        autoCloudBackup();
+                        if ("OWED_TO_ME".equals(direction) && "SAR".equals(selectedCurrency[0])) refreshSarEgpRate(false, false);
                         toast("تم الحفظ" + (dueMs > 0 ? " وتم ضبط التذكير" : "")); showDebts();
                     }
                 }).setNegativeButton("إلغاء", null).show();
@@ -2059,7 +2301,9 @@ public class MainActivity extends Activity {
             double a = parseAmount(input.getText().toString());
             if (a <= 0) { toast("اكتب المبلغ"); return; }
             db.addDebtPayment(debt.id, a, "دفعة يدوية", -1);
-            toast("تم حفظ الدفعة");
+            autoCloudBackup();
+            ExpenseDbHelper.Debt updated = db.getDebtById(debt.id);
+            toast(updated != null && "PAID".equals(updated.status) ? "تم السداد بالكامل واتشال من الليستة" : "تم حفظ الدفعة");
             dialog.dismiss();
             showDebts();
         });
@@ -2119,11 +2363,14 @@ public class MainActivity extends Activity {
             int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
             if (flags != 0) getContentResolver().takePersistableUriPermission(uri, flags);
         } catch (Exception ignored) { }
-        db.addDebtPayment(pendingDebtScreenshotDebtId, pendingDebtScreenshotAmount, pendingDebtScreenshotNote, -1, uri.toString());
+        long debtId = pendingDebtScreenshotDebtId;
+        db.addDebtPayment(debtId, pendingDebtScreenshotAmount, pendingDebtScreenshotNote, -1, uri.toString());
+        autoCloudBackup();
         pendingDebtScreenshotDebtId = -1;
         pendingDebtScreenshotAmount = 0;
         pendingDebtScreenshotNote = "";
-        toast("تم حفظ الدفعة والسكرين شوت");
+        ExpenseDbHelper.Debt updated = db.getDebtById(debtId);
+        toast(updated != null && "PAID".equals(updated.status) ? "تم السداد بالكامل واتشال من الليستة" : "تم حفظ الدفعة والسكرين شوت");
         showDebts();
     }
 
@@ -2371,8 +2618,8 @@ public class MainActivity extends Activity {
         double remaining = Math.max(0, d.amount - d.paid);
         boolean iOwe = "OWE_TO_OTHERS".equals(d.direction);
         String message = iOwe
-                ? "السلام عليكم، للتذكير عليا ليك مبلغ " + money(remaining) + " وهسدده في أقرب وقت."
-                : "السلام عليكم، للتذكير ليا عندك مبلغ " + money(remaining) + " يا ريت تراجعني في ميعاد السداد. شكرًا";
+                ? "السلام عليكم، للتذكير عليا ليك مبلغ " + debtMoney(d, remaining) + " وهسدده في أقرب وقت."
+                : "السلام عليكم، للتذكير ليا عندك مبلغ " + debtMoney(d, remaining) + " يا ريت تراجعني في ميعاد السداد. شكرًا";
         openUrl("https://wa.me/" + cleanPhone(d.whatsapp) + "?text=" + Uri.encode(message));
     }
 
@@ -2451,7 +2698,28 @@ public class MainActivity extends Activity {
     }
 
     private double parseAmount(String s) {
-        try { return Double.parseDouble(s.trim().replace(",", ".")); } catch (Exception e) { return 0; }
+        try {
+            String v = s == null ? "" : s.trim().replace(" ", "").replace("٬", "").replace("،", "");
+            if (v.contains(",") && v.contains(".")) v = v.replace(",", "");
+            else if (v.contains(",")) {
+                int last = v.lastIndexOf(',');
+                int decimals = v.length() - last - 1;
+                v = decimals > 0 && decimals <= 2 ? v.replace(",", ".") : v.replace(",", "");
+            }
+            return Double.parseDouble(v);
+        } catch (Exception e) { return 0; }
+    }
+
+    private String normalizeNumbers(String value) {
+        if (value == null) return "";
+        return value
+                .replace('٠', '0').replace('١', '1').replace('٢', '2').replace('٣', '3').replace('٤', '4')
+                .replace('٥', '5').replace('٦', '6').replace('٧', '7').replace('٨', '8').replace('٩', '9')
+                .replace('٬', ',').replace('٫', '.');
+    }
+
+    private String dayKey(long time) {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(time));
     }
 
     private long parseDateTime(String value) {
@@ -2555,29 +2823,151 @@ public class MainActivity extends Activity {
         limit.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         box.addView(name); box.addView(limit);
         AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(L("فئة الميزانية", "Budget category")).setView(box)
-                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { db.addOrUpdateBudgetCategory(name.getText().toString(), parseAmount(limit.getText().toString())); toast(L("تم الحفظ", "Saved")); showCategoryBudgets(); })
+                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { db.addOrUpdateBudgetCategory(name.getText().toString(), parseAmount(limit.getText().toString())); autoCloudBackup(); toast(L("تم الحفظ", "Saved")); showCategoryBudgets(); })
                 .setNegativeButton(L("إلغاء", "Cancel"), null);
-        if (bc != null) builder.setNeutralButton(L("حذف", "Delete"), (d,w) -> { db.deleteBudgetCategory(bc.id); showCategoryBudgets(); });
+        if (bc != null) builder.setNeutralButton(L("حذف", "Delete"), (d,w) -> { db.deleteBudgetCategory(bc.id); autoCloudBackup(); showCategoryBudgets(); });
+        builder.show();
+    }
+
+    private void showSavingGoals() {
+        setup(L("أهداف الادخار", "Savings goals")); addHomeButton();
+        LinearLayout hero = card(); hero.setBackground(gradient(PRIMARY_DARK, PRIMARY, 24));
+        hero.addView(text("تابع هدف مبلغ أو هدف جرامات ذهب، وكل هدف بيتحفظ في مزامنة Google.", 13, false, Color.rgb(220,250,242)), matchWrap());
+        hero.addView(text("الكاش: " + money(db.getCashBalance()) + " | الذهب: " + String.format(Locale.US, "%.2f جرام", db.getTotalGoldGrams()), 18, true, Color.WHITE), matchWrap());
+        root.addView(hero);
+
+        LinearLayout actions = row();
+        addWeighted(actions, actionCard("💵", "هدف مبلغ", "مثال: أحوش 20,000", PRIMARY, v -> savingGoalDialog(null, "MONEY")), 1, 4);
+        addWeighted(actions, actionCard("🪙", "هدف ذهب", "مثال: أوصل 50 جرام", ORANGE, v -> savingGoalDialog(null, "GOLD_GRAMS")), 1, 4);
+        root.addView(actions, matchWrap());
+
+        List<ExpenseDbHelper.SavingGoal> goals = db.getSavingGoals(true);
+        if (goals.isEmpty()) {
+            LinearLayout empty = card();
+            empty.addView(text("لسه مفيش أهداف ادخار. ابدأ بهدف مبلغ أو هدف ذهب.", 17, true, MUTED), matchWrap());
+            root.addView(empty);
+            return;
+        }
+        for (ExpenseDbHelper.SavingGoal g : goals) addSavingGoalCard(g);
+    }
+
+    private void addSavingGoalCard(ExpenseDbHelper.SavingGoal g) {
+        double pct = g.target <= 0 ? 0 : Math.min(1.0, g.current / g.target);
+        int col = g.completed == 1 || pct >= 1.0 ? PRIMARY : ("GOLD_GRAMS".equals(g.type) ? ORANGE : BLUE);
+        LinearLayout c = card(g.completed == 1 ? pale(PRIMARY) : Color.WHITE);
+        c.setBackground(strokeBg(g.completed == 1 ? pale(PRIMARY) : Color.WHITE, lighten(col), 22, 1));
+        c.addView(text((g.completed == 1 ? "تم: " : "") + g.title, 20, true, DARK), matchWrap());
+        c.addView(text(goalDisplay(g.current, g) + " من " + goalDisplay(g.target, g) + " (" + Math.round(pct * 100) + "%)", 14, true, col), matchWrap());
+        BudgetProgressView pv = new BudgetProgressView(this, pct, Color.rgb(229, 235, 232), col);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10)); lp.setMargins(0, dp(8), 0, dp(8)); c.addView(pv, lp);
+        double remaining = Math.max(0, g.target - g.current);
+        c.addView(text("المتبقي: " + goalDisplay(remaining, g), 13, false, MUTED), matchWrap());
+        LinearLayout actions = row();
+        addWeighted(actions, smallActionButton("تعديل", PURPLE, v -> savingGoalDialog(g, g.type)), 1, 3);
+        addWeighted(actions, smallActionButton("تحديث من الحالي", BLUE, v -> { db.syncSavingGoalProgressFromHoldings(g.id, g.type); autoCloudBackup(); showSavingGoals(); }), 1, 3);
+        addWeighted(actions, smallActionButton(g.completed == 1 ? "إعادة فتح" : "تم", PRIMARY, v -> { db.setSavingGoalCompleted(g.id, g.completed != 1); autoCloudBackup(); showSavingGoals(); }), 1, 3);
+        c.addView(actions, matchWrap());
+        Button del = softBtn("حذف الهدف", RED);
+        del.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("حذف هدف الادخار؟").setPositiveButton("حذف", (d,w) -> { db.deleteSavingGoal(g.id); autoCloudBackup(); showSavingGoals(); }).setNegativeButton("إلغاء", null).show());
+        c.addView(del);
+        root.addView(c);
+    }
+
+    private Button smallActionButton(String label, int color, View.OnClickListener click) {
+        Button b = softBtn(label, color);
+        b.setTextSize(12);
+        b.setOnClickListener(click);
+        return b;
+    }
+
+    private String goalDisplay(double value, ExpenseDbHelper.SavingGoal g) {
+        if ("MONEY".equals(g.type)) return money(value);
+        if (privacyMode()) return "****";
+        return String.format(Locale.US, "%.2f %s", value, g.unit == null || g.unit.trim().isEmpty() ? "جرام" : g.unit);
+    }
+
+    private void savingGoalDialog(ExpenseDbHelper.SavingGoal old, String type) {
+        boolean gold = "GOLD_GRAMS".equals(type);
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(20), dp(5), dp(20), dp(5));
+        EditText title = field("اسم الهدف", old == null ? (gold ? "عاوز أوصل لـ 50 جرام ذهب" : "عاوز أحوش 20,000") : old.title);
+        EditText target = field(gold ? "الهدف بالجرام" : "المبلغ المطلوب", old == null ? "" : String.valueOf(old.target));
+        target.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText current = field(gold ? "التقدم الحالي بالجرام" : "المبلغ الحالي", old == null ? String.valueOf(gold ? db.getTotalGoldGrams() : db.getCashBalance()) : String.valueOf(old.current));
+        current.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        box.addView(title); box.addView(target); box.addView(current);
+        box.addView(text(gold ? "زر تحديث من الحالي هيستخدم إجمالي جرامات الذهب المسجلة." : "زر تحديث من الحالي هيستخدم رصيد محفظة الكاش.", 12, false, MUTED), matchWrap());
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(old == null ? "هدف ادخار جديد" : "تعديل هدف الادخار").setView(box)
+                .setPositiveButton("حفظ", (d,w) -> {
+                    double t = parseAmount(target.getText().toString());
+                    double cur = parseAmount(current.getText().toString());
+                    if (t <= 0) { toast("اكتب قيمة الهدف"); return; }
+                    boolean done = old != null && old.completed == 1;
+                    if (cur >= t) done = true;
+                    db.saveSavingGoal(old == null ? null : old.id, title.getText().toString(), type, t, cur, gold ? "جرام" : db.currencySymbol(), done);
+                    autoCloudBackup();
+                    showSavingGoals();
+                }).setNegativeButton("إلغاء", null);
         builder.show();
     }
 
     private void showMonthArchive() {
         setup(L("أرشيف الشهور", "Monthly archive")); addHomeButton();
         LinearLayout info = card(pale(ORANGE)); info.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
-        info.addView(text(L("كل شهر بيتقفل لوحده عند بداية شهر جديد، وتقدر تقفله يدويًا هنا.", "Each month is archived when a new month starts, and you can close it manually here."), 13, false, DARK), matchWrap());
-        Button close = btn(L("قفل الشهر الحالي الآن", "Close current month now")); close.setOnClickListener(v -> { db.closeCurrentMonth(); toast(L("تم حفظ أرشيف الشهر", "Month archived")); showMonthArchive(); }); info.addView(close);
+        info.addView(text(L("كل شهر لوحده بإجمالياته. الشهر الحالي ظاهر فوق، والشهور المقفولة تحته.", "Each month is shown separately with totals."), 13, false, DARK), matchWrap());
+        Button close = btn(L("قفل الشهر الحالي الآن", "Close current month now")); close.setOnClickListener(v -> { db.closeCurrentMonth(); autoCloudBackup(); toast(L("تم حفظ أرشيف الشهر", "Month archived")); showMonthArchive(); }); info.addView(close);
         root.addView(info);
+
+        addArchiveCard("الشهر الحالي", db.currentMonthKey(), db.getBudget(), db.getMonthlySpent(), db.getExtraIncome(), db.getCashBalance(), System.currentTimeMillis(), currentMonthCategoryLines(), true);
+
         List<ExpenseDbHelper.MonthArchive> list = db.getMonthArchives();
-        if (list.isEmpty()) { LinearLayout e = card(); e.addView(text(L("لسه مفيش شهور متقفلة", "No archived months yet"), 18, true, MUTED), matchWrap()); root.addView(e); return; }
-        for (ExpenseDbHelper.MonthArchive m : list) {
-            LinearLayout c = card();
-            c.addView(text(m.monthKey, 22, true, DARK), matchWrap());
-            c.addView(text(L("الميزانية: ", "Budget: ") + money(m.budget), 13, false, MUTED), matchWrap());
-            c.addView(text(L("المصروف: ", "Spent: ") + money(m.spent), 13, true, m.spent > m.budget && m.budget > 0 ? RED : PRIMARY), matchWrap());
-            c.addView(text(L("دخل إضافي: ", "Extra income: ") + money(m.extraIncome) + " | " + L("كاش: ", "Cash: ") + money(m.cashBalance), 13, false, MUTED), matchWrap());
-            c.addView(text(L("اتقفل: ", "Closed: ") + ExpenseDbHelper.date(m.closedAt), 12, false, MUTED), matchWrap());
-            root.addView(c);
+        if (list.isEmpty()) {
+            LinearLayout e = card(); e.addView(text(L("لسه مفيش شهور قديمة مقفولة", "No closed previous months yet"), 17, true, MUTED), matchWrap()); root.addView(e); return;
         }
+        for (ExpenseDbHelper.MonthArchive m : list) {
+            addArchiveCard("شهر " + m.monthKey, m.monthKey, m.budget, m.spent, m.extraIncome, m.cashBalance, m.closedAt, archiveCategoryLines(m.summary), false);
+        }
+    }
+
+    private void addArchiveCard(String title, String monthKey, double budget, double spent, double extraIncome, double cashBalance, long closedAt, List<String> categories, boolean current) {
+        double pct = budget <= 0 ? 0 : Math.min(1.0, spent / budget);
+        int col = budget > 0 && spent >= budget ? RED : budget > 0 && spent >= budget * 0.80 ? ORANGE : PRIMARY;
+        LinearLayout c = card(current ? pale(PRIMARY) : Color.WHITE);
+        c.setBackground(strokeBg(current ? pale(PRIMARY) : Color.WHITE, lighten(col), 22, 1));
+        c.addView(text(title + " - " + monthKey, 21, true, DARK), matchWrap());
+        c.addView(text("الميزانية: " + money(budget) + " | المصروف: " + money(spent), 14, true, col), matchWrap());
+        c.addView(text("المتبقي: " + money(budget - spent) + " | النسبة: " + (budget <= 0 ? "0" : Math.round((spent * 100.0) / budget)) + "%", 13, false, MUTED), matchWrap());
+        BudgetProgressView pv = new BudgetProgressView(this, pct, Color.rgb(229, 235, 232), col);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10)); lp.setMargins(0, dp(8), 0, dp(8)); c.addView(pv, lp);
+        c.addView(text("دخل إضافي: " + money(extraIncome) + " | كاش: " + money(cashBalance), 13, false, MUTED), matchWrap());
+        if (!current) c.addView(text("اتقفل: " + ExpenseDbHelper.date(closedAt), 12, false, MUTED), matchWrap());
+        if (!categories.isEmpty()) {
+            c.addView(text("أعلى الفئات:", 14, true, DARK), matchWrap());
+            for (String line : categories) c.addView(text(line, 12, false, MUTED), matchWrap());
+        }
+        root.addView(c);
+    }
+
+    private List<String> currentMonthCategoryLines() {
+        List<String> lines = new ArrayList<>();
+        int i = 0;
+        for (ExpenseDbHelper.CatTotal ct : db.getSpendingByCategory(5)) {
+            lines.add(ct.category + ": " + money(ct.total));
+            if (++i >= 5) break;
+        }
+        return lines;
+    }
+
+    private List<String> archiveCategoryLines(String summary) {
+        List<String> lines = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONObject(summary == null ? "{}" : summary).optJSONArray("categories");
+            if (arr == null) return lines;
+            for (int i = 0; i < arr.length() && i < 5; i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o != null) lines.add(o.optString("category", "عام") + ": " + money(o.optDouble("total", 0)));
+            }
+        } catch (Exception ignored) {}
+        return lines;
     }
 
     private void showCashWallet() {
@@ -2585,11 +2975,19 @@ public class MainActivity extends Activity {
         LinearLayout hero = card(); hero.setBackground(gradient(PRIMARY_DARK, PRIMARY, 24));
         hero.addView(text(L("الكاش المتاح", "Cash available"), 14, false, Color.rgb(220,250,242)), matchWrap());
         hero.addView(text(money(db.getCashBalance()), 32, true, Color.WHITE), matchWrap());
+        String egpLine = cashSarToEgpLine(db.getCashBalance());
+        if (egpLine.length() > 0) hero.addView(text(egpLine, 14, true, Color.WHITE), matchWrap());
         hero.addView(text(L("سجل الكاش اللي معاك وصرف الكاش كعملية ضمن الميزانية.", "Track cash on hand and cash spending in your budget."), 12, false, Color.rgb(220,250,242)), matchWrap());
         root.addView(hero);
         Button add = btn(L("إضافة كاش", "Add cash")); add.setOnClickListener(v -> cashDialog(true)); root.addView(add);
         Button spend = softBtn(L("صرف كاش", "Spend cash"), ORANGE); spend.setOnClickListener(v -> cashDialog(false)); root.addView(spend);
         Button set = softBtn(L("تعديل رصيد الكاش يدويًا", "Set cash balance"), BLUE); set.setOnClickListener(v -> setCashDialog()); root.addView(set);
+        if ("SAR".equalsIgnoreCase(db.getCurrency())) {
+            Button rate = softBtn("تحديث سعر الريال من بنك مصر", BLUE);
+            rate.setOnClickListener(v -> refreshSarEgpRate(true, false, true));
+            root.addView(rate);
+            refreshSarEgpRate(false, false, true);
+        }
     }
 
     private void cashDialog(boolean addMode) {
@@ -2599,14 +2997,14 @@ public class MainActivity extends Activity {
         EditText category = field(L("التصنيف", "Category"), "كاش");
         box.addView(amount); box.addView(title); if (!addMode) box.addView(category);
         new AlertDialog.Builder(this).setTitle(addMode ? L("إضافة كاش", "Add cash") : L("صرف كاش", "Spend cash")).setView(box)
-                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { double a = parseAmount(amount.getText().toString()); if (addMode) db.addCash(a, title.getText().toString()); else db.spendCash(a, title.getText().toString(), category.getText().toString()); showCashWallet(); })
+                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { double a = parseAmount(amount.getText().toString()); if (addMode) db.addCash(a, title.getText().toString()); else db.spendCash(a, title.getText().toString(), category.getText().toString()); autoCloudBackup(); if (!addMode) { maybeShowCategoryBudgetAlert(category.getText().toString()); maybeShowMonthlyBudgetAlert(); } showCashWallet(); })
                 .setNegativeButton(L("إلغاء", "Cancel"), null).show();
     }
 
     private void setCashDialog() {
         EditText amount = new EditText(this); amount.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL); amount.setText(String.valueOf(db.getCashBalance())); amount.setGravity(Gravity.RIGHT);
         new AlertDialog.Builder(this).setTitle(L("تعديل رصيد الكاش", "Set cash balance")).setView(amount)
-                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { db.setCashBalance(parseAmount(amount.getText().toString())); showCashWallet(); })
+                .setPositiveButton(L("حفظ", "Save"), (d,w) -> { db.setCashBalance(parseAmount(amount.getText().toString())); autoCloudBackup(); showCashWallet(); })
                 .setNegativeButton(L("إلغاء", "Cancel"), null).show();
     }
 

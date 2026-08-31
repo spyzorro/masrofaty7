@@ -2172,7 +2172,7 @@ public class MainActivity extends Activity {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(12000);
         c.setReadTimeout(12000);
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.39");
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.40");
         StringBuilder html = new StringBuilder();
         try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"))) {
             String line;

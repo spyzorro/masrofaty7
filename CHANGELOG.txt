@@ -1,3 +1,8 @@
+v2.40
+- إصلاح فشل GitHub Actions عند مرحلة Gradle بسبب عدم العثور على com.google.gms.google-services.
+- تعريف Google Services plugin في build.gradle الجذر بالطريقة المتوافقة مع apply plugin داخل app/build.gradle.
+- رفع الإصدار إلى versionCode 51 و versionName 2.40.
+
 v2.39
 - عرض المقابل بالجنيه المصري تحت رصيد محفظة الكاش عندما تكون عملة التطبيق ريال سعودي.
 - إضافة زر تحديث سعر الريال من بنك مصر داخل شاشة محفظة الكاش.

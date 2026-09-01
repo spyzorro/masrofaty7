@@ -1,8 +1,8 @@
 {
-  "latestVersionCode": 51,
-  "latestVersionName": "2.40",
+  "latestVersionCode": 52,
+  "latestVersionName": "2.41",
   "apkUrl": "https://github.com/spyzorro/masrofaty7/releases/latest/download/Masrofaty-latest.apk",
-  "notes": "إصلاح بناء GitHub Actions بتعريف Google Services plugin في Gradle",
+  "notes": "إضافة صفحة تفاصيل لكل شخص في الديون مع كل الدفعات وتواريخها",
   "dataVersion": "2026-08-13",
   "message": "نسخة واحدة كاملة متاحة الآن - استخدم FINAL-Masrofaty-ONE-APK"
 }

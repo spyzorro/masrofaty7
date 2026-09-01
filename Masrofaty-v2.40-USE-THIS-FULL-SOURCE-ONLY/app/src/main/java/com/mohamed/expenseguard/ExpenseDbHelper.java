@@ -1853,7 +1853,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     }
 
     public static class Debt {
-        public long id; public String name; public double amount; public double paid; public String currency; public String whatsapp; public String facebook; public String notes; public String status; public String direction; public long dueDateMillis;
+        public long id; public String name; public double amount; public double paid; public String currency; public String whatsapp; public String facebook; public String notes; public String status; public String direction; public long dueDateMillis; public long createdAt; public long updatedAt;
         static Debt from(Cursor c) {
             Debt d = new Debt();
             d.id = c.getLong(c.getColumnIndexOrThrow("id"));
@@ -1870,6 +1870,10 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             d.direction = dirIndex >= 0 ? c.getString(dirIndex) : "OWED_TO_ME";
             int dueIndex = c.getColumnIndex("dueDateMillis");
             d.dueDateMillis = dueIndex >= 0 ? c.getLong(dueIndex) : 0;
+            int createdIndex = c.getColumnIndex("createdAt");
+            d.createdAt = createdIndex >= 0 ? c.getLong(createdIndex) : 0;
+            int updatedIndex = c.getColumnIndex("updatedAt");
+            d.updatedAt = updatedIndex >= 0 ? c.getLong(updatedIndex) : 0;
             return d;
         }
     }

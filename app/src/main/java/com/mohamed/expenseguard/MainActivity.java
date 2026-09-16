@@ -1238,6 +1238,13 @@ public class MainActivity extends Activity {
         addWeighted(stats4, statCard("💵", L("محفظة الكاش", "Cash wallet"), cashBalanceSummary(cashBalance), PRIMARY_DARK, v -> showCashWallet()), 1, 4);
         root.addView(stats4, matchWrap());
 
+        double netMoney = db.getCashBalance()
+                + db.getDebtTotal("OWED_TO_ME", db.getCurrency())
+                - db.getDebtTotal("OWE_TO_OTHERS", db.getCurrency());
+        LinearLayout stats5 = row();
+        addWeighted(stats5, statCard("💎", "صافي فلوسك", money(netMoney), PRIMARY, v -> showDebts()), 1, 4);
+        root.addView(stats5, matchWrap());
+
         if (pending > 0) {
             LinearLayout pendingCard = card(pale(ORANGE));
             pendingCard.setBackground(strokeBg(pale(ORANGE), lighten(ORANGE), 22, 1));
@@ -2082,6 +2089,12 @@ public class MainActivity extends Activity {
         if (d.facebook != null && d.facebook.trim().length() > 0) {
             Button f = softBtn("فتح فيسبوك", BLUE); f.setOnClickListener(v -> openUrl(d.facebook)); c.addView(f);
         }
+        Button details = softBtn("صفحة الشخص والدفعات", mainColor);
+        details.setOnClickListener(v -> showDebtPersonPage(d.id));
+        c.addView(details);
+        Button increase = softBtn("➕ زود المبلغ", BLUE);
+        increase.setOnClickListener(v -> debtIncreaseAmountDialog(d));
+        c.addView(increase);
         showDebtPaymentsOnCard(c, d);
         Button payment = softBtn(iOwe ? "سجل إنك سددت جزء" : "سجل إنه دفع جزء", ORANGE);
         payment.setOnClickListener(v -> debtPaymentAmountDialog(d));
@@ -2090,6 +2103,86 @@ public class MainActivity extends Activity {
         reminder.setOnClickListener(v -> debtDueDateDialog(d));
         c.addView(reminder);
         root.addView(c);
+    }
+
+    private void showDebtPersonPage(long debtId) {
+        ExpenseDbHelper.Debt d = db.getDebtById(debtId);
+        if (d == null) { toast("الدين غير موجود"); showDebts(); return; }
+        setup("صفحة " + d.name); addHomeButton();
+        boolean iOwe = "OWE_TO_OTHERS".equals(d.direction);
+        int mainColor = iOwe ? RED : PURPLE;
+        double remaining = Math.max(0, d.amount - d.paid);
+
+        LinearLayout hero = card();
+        hero.setBackground(gradient(mainColor, iOwe ? Color.rgb(167, 47, 47) : Color.rgb(92, 74, 168), 24));
+        hero.addView(text(d.name, 25, true, Color.WHITE), matchWrap());
+        hero.addView(text(iOwe ? "شخص ليه فلوس عندك" : "شخص ليك عنده فلوس", 13, false, Color.rgb(245, 240, 255)), matchWrap());
+        hero.addView(text("الأصل: " + debtMoney(d, d.amount), 16, true, Color.WHITE), matchWrap());
+        hero.addView(text("المدفوع: " + debtMoney(d, d.paid), 15, false, Color.WHITE), matchWrap());
+        hero.addView(text("المتبقي: " + debtMoney(d, remaining), 18, true, Color.WHITE), matchWrap());
+        String egpValue = debtSarToEgpLine(d, remaining);
+        if (egpValue.length() > 0) hero.addView(text(egpValue, 13, true, Color.WHITE), matchWrap());
+        hero.addView(text(debtDueText(d), 13, false, Color.rgb(245, 240, 255)), matchWrap());
+        root.addView(hero);
+
+        Button back = softBtn("رجوع لقائمة الديون", MUTED);
+        back.setOnClickListener(v -> showDebts());
+        root.addView(back);
+        if (!"PAID".equals(d.status) && remaining > 0.009) {
+            Button payment = softBtn(iOwe ? "سجل دفعة سددتها" : "سجل دفعة دفعها", ORANGE);
+            payment.setOnClickListener(v -> debtPaymentAmountDialog(d));
+            root.addView(payment);
+        }
+        Button increase = softBtn("➕ زود المبلغ على الشخص", BLUE);
+        increase.setOnClickListener(v -> debtIncreaseAmountDialog(d));
+        root.addView(increase);
+
+        LinearLayout info = card(Color.WHITE);
+        info.setBackground(strokeBg(Color.WHITE, Color.rgb(224, 235, 231), 22, 1));
+        info.addView(text("بيانات الشخص", 18, true, DARK), matchWrap());
+        info.addView(text("الحالة: " + debtStatusArabic(d.status), 13, true, debtStatusColor(d.status)), matchWrap());
+        info.addView(text("العملة: " + safeCurrency(d.currency), 13, false, MUTED), matchWrap());
+        info.addView(text("تاريخ التسجيل: " + (d.createdAt > 0 ? ExpenseDbHelper.date(d.createdAt) : "غير متاح"), 13, false, MUTED), matchWrap());
+        if (d.notes != null && d.notes.trim().length() > 0) info.addView(text("ملاحظات: " + d.notes, 13, false, MUTED), matchWrap());
+        root.addView(info);
+
+        LinearLayout history = card(Color.WHITE);
+        history.setBackground(strokeBg(Color.WHITE, Color.rgb(224, 235, 231), 22, 1));
+        history.addView(text("كل العمليات والدفعات", 18, true, DARK), matchWrap());
+        addDebtHistoryRow(history, "تسجيل الدين", debtMoney(d, d.amount), d.createdAt, d.notes, mainColor, null);
+        List<ExpenseDbHelper.DebtPayment> payments = db.getDebtPayments(d.id);
+        if (payments.isEmpty()) {
+            history.addView(text("لسه مفيش دفعات متسجلة للشخص ده.", 13, false, MUTED), matchWrap());
+        } else {
+            int number = payments.size();
+            for (ExpenseDbHelper.DebtPayment p : payments) {
+                if (p.amount < 0) {
+                    addDebtHistoryRow(history, "زيادة في المبلغ", debtMoney(d, Math.abs(p.amount)), p.dateMillis, p.note, BLUE, p.screenshotUri);
+                } else {
+                    addDebtHistoryRow(history, "دفعة رقم " + number, debtMoney(d, p.amount), p.dateMillis, p.note, PRIMARY, p.screenshotUri);
+                    number--;
+                }
+            }
+        }
+        root.addView(history);
+    }
+
+    private void addDebtHistoryRow(LinearLayout parent, String title, String amount, long dateMillis, String note, int color, String screenshotUri) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(10), dp(8), dp(10), dp(8));
+        row.setBackground(strokeBg(Color.rgb(250, 252, 251), lighten(color), 16, 1));
+        row.addView(text(title + " — " + amount, 14, true, DARK), matchWrap());
+        row.addView(text("التاريخ: " + (dateMillis > 0 ? ExpenseDbHelper.date(dateMillis) : "غير متاح"), 12, false, MUTED), matchWrap());
+        if (note != null && note.trim().length() > 0) row.addView(text(note, 12, false, MUTED), matchWrap());
+        if (screenshotUri != null && screenshotUri.trim().length() > 0) {
+            Button shot = softBtn("عرض السكرين شوت", BLUE);
+            shot.setOnClickListener(v -> openDebtPaymentScreenshot(screenshotUri));
+            row.addView(shot);
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(5), 0, dp(5));
+        parent.addView(row, lp);
     }
 
     private String debtMoney(ExpenseDbHelper.Debt d, double amount) {
@@ -2172,7 +2265,7 @@ public class MainActivity extends Activity {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(12000);
         c.setReadTimeout(12000);
-        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.40");
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 Masrofaty/2.41");
         StringBuilder html = new StringBuilder();
         try (BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"))) {
             String line;
@@ -2268,6 +2361,45 @@ public class MainActivity extends Activity {
         return s;
     }
 
+    private void debtIncreaseAmountDialog(ExpenseDbHelper.Debt debt) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(8), dp(18), dp(8));
+
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        input.setHint("المبلغ الإضافي");
+        input.setGravity(Gravity.RIGHT);
+        input.setTextDirection(View.TEXT_DIRECTION_RTL);
+        box.addView(input, matchWrap());
+
+        EditText note = field("سبب الزيادة / ملاحظة اختيارية", "");
+        box.addView(note);
+
+        String label = "OWE_TO_OTHERS".equals(debt.direction)
+                ? "المبلغ اللي زاد عليك"
+                : "المبلغ اللي زاد ليك";
+
+        new AlertDialog.Builder(this)
+                .setTitle("زيادة مبلغ " + debt.name)
+                .setMessage(label + " — العملة: " + safeCurrency(debt.currency))
+                .setView(box)
+                .setPositiveButton("إضافة الزيادة", (dialog, which) -> {
+                    double a = parseAmount(input.getText().toString());
+                    if (a <= 0) {
+                        toast("اكتب مبلغ الزيادة");
+                        return;
+                    }
+                    String n = note.getText().toString().trim();
+                    db.addDebtIncrease(debt.id, a, n.length() > 0 ? n : "زيادة على أصل الدين");
+                    autoCloudBackup();
+                    toast("تمت زيادة المبلغ وتسجيل العملية");
+                    showDebtPersonPage(debt.id);
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
     private void manualDebtPaymentDialog() {
         List<ExpenseDbHelper.Debt> debts = db.getDebts();
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(10), dp(6), dp(10), dp(6));
@@ -2322,13 +2454,19 @@ public class MainActivity extends Activity {
     private void showDebtPaymentsOnCard(LinearLayout c, ExpenseDbHelper.Debt d) {
         List<ExpenseDbHelper.DebtPayment> payments = db.getDebtPayments(d.id);
         if (payments.isEmpty()) return;
-        c.addView(text("سجل السداد", 14, true, DARK), matchWrap());
+        c.addView(text("آخر دفعات السداد", 14, true, DARK), matchWrap());
+        int shown = 0;
         for (ExpenseDbHelper.DebtPayment p : payments) {
+            if (shown >= 3) break;
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
             row.setPadding(dp(10), dp(7), dp(10), dp(7));
             row.setBackground(strokeBg(Color.rgb(250, 252, 251), Color.rgb(226, 235, 231), 16, 1));
-            row.addView(text(debtMoney(d, p.amount) + " — " + ExpenseDbHelper.date(p.dateMillis), 13, true, DARK), matchWrap());
+            if (p.amount < 0) {
+                row.addView(text("زيادة في المبلغ: " + debtMoney(d, Math.abs(p.amount)) + " — " + ExpenseDbHelper.date(p.dateMillis), 13, true, BLUE), matchWrap());
+            } else {
+                row.addView(text(debtMoney(d, p.amount) + " — " + ExpenseDbHelper.date(p.dateMillis), 13, true, DARK), matchWrap());
+            }
             if (p.note != null && p.note.trim().length() > 0) row.addView(text(p.note, 12, false, MUTED), matchWrap());
             if (p.screenshotUri != null && p.screenshotUri.trim().length() > 0) {
                 Button shot = softBtn("عرض السكرين شوت", BLUE);
@@ -2338,7 +2476,9 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             lp.setMargins(0, dp(4), 0, dp(4));
             c.addView(row, lp);
+            shown++;
         }
+        if (payments.size() > shown) c.addView(text("وفي " + (payments.size() - shown) + " دفعة تانية داخل صفحة الشخص.", 12, false, MUTED), matchWrap());
     }
 
     private void chooseDebtPaymentScreenshot() {

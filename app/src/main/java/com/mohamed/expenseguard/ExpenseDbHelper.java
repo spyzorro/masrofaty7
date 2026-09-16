@@ -33,7 +33,7 @@ import org.json.JSONObject;
 
 public class ExpenseDbHelper extends SQLiteOpenHelper {
     private static final String DB_NAME = "expense_guard.db";
-    private static final int DB_VERSION = 8;
+    private static final int DB_VERSION = 9;
     private static final String PUBLIC_BACKUP_FILE = "masrofaty_backup.json";
     private static final String PUBLIC_BACKUP_FILE_ALT = "masrofaty_backup_DO_NOT_DELETE.json";
     private static final String PUBLIC_BACKUP_DIR = Environment.DIRECTORY_DOCUMENTS + "/Masrofaty/";
@@ -147,6 +147,9 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             try { createSavingGoalsTable(db); } catch (Exception ignored) {}
             try { setSetting(db, "budget_alert_80_month", ""); } catch (Exception ignored) {}
             try { setSetting(db, "budget_alert_100_month", ""); } catch (Exception ignored) {}
+        }
+        if (oldVersion < 9) {
+            // Debt increases are stored as negative history rows in debt_payments; no schema change required.
         }
     }
 
@@ -905,6 +908,37 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         long id = getWritableDatabase().insert("debts", null, cv);
         if (id > 0) autoLocalBackupAfterChange();
         return id;
+    }
+
+    public void addDebtIncrease(long debtId, double increaseAmount, String note) {
+        if (increaseAmount <= 0) return;
+        SQLiteDatabase db = getWritableDatabase();
+        long now = System.currentTimeMillis();
+
+        try (Cursor c = db.rawQuery("SELECT amount, paid FROM debts WHERE id=?", new String[]{String.valueOf(debtId)})) {
+            if (!c.moveToFirst()) return;
+
+            double total = c.getDouble(0);
+            double paid = c.getDouble(1);
+            double newTotal = total + increaseAmount;
+
+            ContentValues cv = new ContentValues();
+            cv.put("amount", newTotal);
+            cv.put("status", paid >= newTotal ? "PAID" : (paid > 0.009 ? "PARTIAL" : "OPEN"));
+            cv.put("updatedAt", now);
+            db.update("debts", cv, "id=?", new String[]{String.valueOf(debtId)});
+
+            // Negative payment row is a history entry for an increase, not a real payment.
+            ContentValues p = new ContentValues();
+            p.put("debtId", debtId);
+            p.put("amount", -increaseAmount);
+            p.put("note", note == null || note.trim().isEmpty() ? "زيادة على أصل الدين" : note.trim());
+            p.put("dateMillis", now);
+            p.put("txId", -1);
+            p.put("screenshotUri", "");
+            db.insert("debt_payments", null, p);
+        }
+        autoLocalBackupAfterChange();
     }
 
     public void updateDebtDueDate(long debtId, long dueDateMillis) {
@@ -1853,7 +1887,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
     }
 
     public static class Debt {
-        public long id; public String name; public double amount; public double paid; public String currency; public String whatsapp; public String facebook; public String notes; public String status; public String direction; public long dueDateMillis;
+        public long id; public String name; public double amount; public double paid; public String currency; public String whatsapp; public String facebook; public String notes; public String status; public String direction; public long dueDateMillis; public long createdAt; public long updatedAt;
         static Debt from(Cursor c) {
             Debt d = new Debt();
             d.id = c.getLong(c.getColumnIndexOrThrow("id"));
@@ -1870,6 +1904,10 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             d.direction = dirIndex >= 0 ? c.getString(dirIndex) : "OWED_TO_ME";
             int dueIndex = c.getColumnIndex("dueDateMillis");
             d.dueDateMillis = dueIndex >= 0 ? c.getLong(dueIndex) : 0;
+            int createdIndex = c.getColumnIndex("createdAt");
+            d.createdAt = createdIndex >= 0 ? c.getLong(createdIndex) : 0;
+            int updatedIndex = c.getColumnIndex("updatedAt");
+            d.updatedAt = updatedIndex >= 0 ? c.getLong(updatedIndex) : 0;
             return d;
         }
     }

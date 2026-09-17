@@ -22,10 +22,15 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
+          cache: gradle
 
+      # setup-android v3 tries to install the obsolete SDK package "tools".
+      # Use v4 and install only valid SDK package names.
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -33,7 +38,10 @@ jobs:
           gradle-version: 8.10.2
 
       - name: Detect project folder
+        shell: bash
         run: |
+          set -euo pipefail
+
           echo "Repository files:"
           find . -maxdepth 3 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts" \) | sort
 
@@ -50,12 +58,14 @@ jobs:
           find_valid_project() {
             while IFS= read -r SETTINGS_CANDIDATE; do
               DIR=$(dirname "$SETTINGS_CANDIDATE")
+
               case "$DIR" in
                 *modified-files*|*modified_files*|*patch-only*|*patch_only*)
                   echo "Skipping patch/modified folder: $DIR" >&2
                   continue
                   ;;
               esac
+
               if [ -f "$DIR/app/build.gradle" ] \
                 && [ -f "$DIR/app/src/main/AndroidManifest.xml" ] \
                 && [ -f "$DIR/app/src/main/res/drawable/app_logo.png" ] \
@@ -64,30 +74,34 @@ jobs:
                 && [ -f "$DIR/app/src/main/res/values/styles.xml" ] \
                 && [ -f "$DIR/app/src/main/java/com/mohamed/expenseguard/MainActivity.java" ] \
                 && [ -f "$DIR/app/src/main/java/com/mohamed/expenseguard/MessageParser.java" ]; then
+
                 VERSION_CODE=$(grep -E "versionCode" "$DIR/app/build.gradle" | head -1 | sed -E "s/[^0-9]*([0-9]+).*/\1/")
                 VERSION_NAME=$(grep -E "versionName" "$DIR/app/build.gradle" | head -1 | sed -E "s/.*versionName ['\"]([^'\"]+)['\"].*/\1/")
-                if [ -z "$VERSION_CODE" ]; then VERSION_CODE=0; fi
-                if [ -z "$VERSION_NAME" ]; then VERSION_NAME=unknown; fi
+                [ -n "$VERSION_CODE" ] || VERSION_CODE=0
+                [ -n "$VERSION_NAME" ] || VERSION_NAME=unknown
+
                 echo "${VERSION_CODE}|${VERSION_NAME}|${SETTINGS_CANDIDATE}"
                 continue
               fi
+
               echo "Skipping incomplete Gradle project: $DIR" >&2
             done
             return 1
           }
 
           PROJECT_CANDIDATES=$(find . "$GITHUB_WORKSPACE/_unzipped_sources" -maxdepth 8 -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | sort | find_valid_project || true)
+
           echo "Valid project candidates:"
           echo "$PROJECT_CANDIDATES"
+
           SELECTED=$(echo "$PROJECT_CANDIDATES" | grep -E '^[0-9]+\|' | sort -t '|' -k1,1nr | head -1 || true)
           SETTINGS_FILE=$(echo "$SELECTED" | cut -d '|' -f 3-)
           VERSION_CODE=$(echo "$SELECTED" | cut -d '|' -f 1)
           VERSION_NAME=$(echo "$SELECTED" | cut -d '|' -f 2)
 
           if [ -z "$SETTINGS_FILE" ]; then
-            echo "No Gradle settings file found."
-            echo "Fix: upload the extracted project contents, or upload the full source ZIP file into the repository root."
-            find . -maxdepth 5 -type f | sort | head -200
+            echo "No valid Gradle project found."
+            find . -maxdepth 6 -type f | sort | head -300
             exit 1
           fi
 
@@ -99,31 +113,45 @@ jobs:
           echo "Detected version: $VERSION_NAME ($VERSION_CODE)"
 
       - name: Build release APK
+        shell: bash
         run: |
-          gradle -p "$PROJECT_DIR" assembleRelease --no-daemon
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" clean assembleRelease --no-daemon --stacktrace
 
-      - name: Prepare final single APK
+      - name: Verify and prepare exactly one APK
+        shell: bash
         run: |
-          VERSION_NAME=$(grep -E "versionName" "$PROJECT_DIR/app/build.gradle" | head -1 | sed -E "s/.*versionName ['\"]([^'\"]+)['\"].*/\1/")
-          VERSION_CODE=$(grep -E "versionCode" "$PROJECT_DIR/app/build.gradle" | head -1 | sed -E "s/[^0-9]*([0-9]+).*/\1/")
-          APK_SOURCE=$(find "$PROJECT_DIR/app/build/outputs/apk/release" -name "*.apk" | head -1)
+          set -euo pipefail
 
-          if [ -z "$APK_SOURCE" ]; then
-            echo "APK file was not found"
+          RELEASE_DIR="$PROJECT_DIR/app/build/outputs/apk/release"
+          mapfile -t APKS < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name "*.apk" | sort)
+
+          echo "Release APK files found:"
+          printf '%s\n' "${APKS[@]:-<none>}"
+
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "ERROR: Expected exactly one release APK. Found ${#APKS[@]}."
+            echo "This workflow intentionally refuses to publish split/multiple APK outputs."
+            find "$PROJECT_DIR/app/build/outputs/apk" -type f -print | sort || true
             exit 1
           fi
+
+          APK_SOURCE="${APKS[0]}"
+          echo "Using APK: $APK_SOURCE"
 
           rm -rf "$GITHUB_WORKSPACE/final-apk"
           mkdir -p "$GITHUB_WORKSPACE/final-apk"
           cp "$APK_SOURCE" "$GITHUB_WORKSPACE/final-apk/Masrofaty-latest.apk"
 
-          APK_COUNT=$(find "$GITHUB_WORKSPACE/final-apk" -name "*.apk" | wc -l | tr -d ' ')
-          if [ "$APK_COUNT" != "1" ]; then
-            echo "Expected exactly one APK, found $APK_COUNT"
+          VERSION_NAME=$(grep -E "versionName" "$PROJECT_DIR/app/build.gradle" | head -1 | sed -E "s/.*versionName ['\"]([^'\"]+)['\"].*/\1/")
+          VERSION_CODE=$(grep -E "versionCode" "$PROJECT_DIR/app/build.gradle" | head -1 | sed -E "s/[^0-9]*([0-9]+).*/\1/")
+
+          if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
+            echo "ERROR: Could not read versionName/versionCode."
             exit 1
           fi
 
-          cat > "$GITHUB_WORKSPACE/final-apk/update.json" <<EOF
+          cat > "$GITHUB_WORKSPACE/final-apk/update.json" <<EOF_JSON
           {
             "latestVersionCode": ${VERSION_CODE},
             "latestVersionName": "${VERSION_NAME}",
@@ -132,29 +160,37 @@ jobs:
             "dataVersion": "2026-08-13",
             "message": "نسخة واحدة كاملة متاحة الآن"
           }
-          EOF
+          EOF_JSON
 
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
-          echo "Prepared APK from version $VERSION_NAME ($VERSION_CODE)"
+          echo "Prepared final APK: Masrofaty-latest.apk"
+          ls -lh "$GITHUB_WORKSPACE/final-apk/Masrofaty-latest.apk"
 
       - name: Publish latest GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release create "v${VERSION_NAME}" \
-            "final-apk/Masrofaty-latest.apk#Masrofaty-latest.apk" \
-            "final-apk/update.json#update.json" \
-            --title "Masrofaty v${VERSION_NAME}" \
-            --notes "نسخة واحدة كاملة تشمل المصروفات والمهام والذهب ومزامنة Google." \
-            --latest \
-          || {
-            gh release upload "v${VERSION_NAME}" \
-              "final-apk/Masrofaty-latest.apk#Masrofaty-latest.apk" \
-              "final-apk/update.json#update.json" \
-              --clobber
-            gh release edit "v${VERSION_NAME}" --latest
-          }
+          set -euo pipefail
+
+          TAG="v${VERSION_NAME}"
+          APK="final-apk/Masrofaty-latest.apk"
+          JSON="final-apk/update.json"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Replacing its assets."
+            gh release upload "$TAG" "$APK#Masrofaty-latest.apk" "$JSON#update.json" --clobber
+            gh release edit "$TAG" --title "Masrofaty v${VERSION_NAME}" --notes "نسخة واحدة كاملة تشمل المصروفات والمهام والذهب ومزامنة Google." --latest
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" \
+              "$APK#Masrofaty-latest.apk" \
+              "$JSON#update.json" \
+              --title "Masrofaty v${VERSION_NAME}" \
+              --notes "نسخة واحدة كاملة تشمل المصروفات والمهام والذهب ومزامنة Google." \
+              --latest
+          fi
 
       - name: Upload final one APK artifact
         uses: actions/upload-artifact@v4
@@ -162,3 +198,4 @@ jobs:
           name: FINAL-Masrofaty-ONE-APK
           path: final-apk/Masrofaty-latest.apk
           if-no-files-found: error
+          retention-days: 30

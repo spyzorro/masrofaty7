@@ -149,7 +149,7 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             try { setSetting(db, "budget_alert_100_month", ""); } catch (Exception ignored) {}
         }
         if (oldVersion < 9) {
-            // Debt increases are stored as negative history rows in debt_payments; no schema change required.
+            // No schema change: debt increases are stored as negative rows in debt_payments.
         }
     }
 
@@ -910,37 +910,6 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
         return id;
     }
 
-    public void addDebtIncrease(long debtId, double increaseAmount, String note) {
-        if (increaseAmount <= 0) return;
-        SQLiteDatabase db = getWritableDatabase();
-        long now = System.currentTimeMillis();
-
-        try (Cursor c = db.rawQuery("SELECT amount, paid FROM debts WHERE id=?", new String[]{String.valueOf(debtId)})) {
-            if (!c.moveToFirst()) return;
-
-            double total = c.getDouble(0);
-            double paid = c.getDouble(1);
-            double newTotal = total + increaseAmount;
-
-            ContentValues cv = new ContentValues();
-            cv.put("amount", newTotal);
-            cv.put("status", paid >= newTotal ? "PAID" : (paid > 0.009 ? "PARTIAL" : "OPEN"));
-            cv.put("updatedAt", now);
-            db.update("debts", cv, "id=?", new String[]{String.valueOf(debtId)});
-
-            // Negative payment row is a history entry for an increase, not a real payment.
-            ContentValues p = new ContentValues();
-            p.put("debtId", debtId);
-            p.put("amount", -increaseAmount);
-            p.put("note", note == null || note.trim().isEmpty() ? "زيادة على أصل الدين" : note.trim());
-            p.put("dateMillis", now);
-            p.put("txId", -1);
-            p.put("screenshotUri", "");
-            db.insert("debt_payments", null, p);
-        }
-        autoLocalBackupAfterChange();
-    }
-
     public void updateDebtDueDate(long debtId, long dueDateMillis) {
         ContentValues cv = new ContentValues();
         cv.put("dueDateMillis", Math.max(0, dueDateMillis));
@@ -995,6 +964,36 @@ public class ExpenseDbHelper extends SQLiteOpenHelper {
             }
         }
         autoLocalBackupAfterChange();
+    }
+
+    /** Adds a new amount to an existing debt without deleting or changing prior payments.
+     * The increase is recorded as a negative history row so the person page keeps a full audit trail.
+     */
+    public void addDebtIncrease(long debtId, double increaseAmount, String note) {
+        if (increaseAmount <= 0) return;
+        SQLiteDatabase db = getWritableDatabase();
+        try (Cursor c = db.rawQuery("SELECT amount, paid FROM debts WHERE id=?", new String[]{String.valueOf(debtId)})) {
+            if (!c.moveToFirst()) return;
+            double total = c.getDouble(0);
+            double paid = c.getDouble(1);
+            double newTotal = total + increaseAmount;
+
+            ContentValues cv = new ContentValues();
+            cv.put("amount", newTotal);
+            cv.put("status", paid >= newTotal ? "PAID" : (paid > 0.009 ? "PARTIAL" : "OPEN"));
+            cv.put("updatedAt", System.currentTimeMillis());
+            db.update("debts", cv, "id=?", new String[]{String.valueOf(debtId)});
+
+            ContentValues history = new ContentValues();
+            history.put("debtId", debtId);
+            history.put("amount", -increaseAmount);
+            history.put("note", note == null ? "زيادة في المبلغ" : note);
+            history.put("dateMillis", System.currentTimeMillis());
+            history.put("txId", -1);
+            history.put("screenshotUri", "");
+            db.insert("debt_payments", null, history);
+            autoLocalBackupAfterChange();
+        }
     }
 
     public List<DebtPayment> getDebtPayments(long debtId) {
